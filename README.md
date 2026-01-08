@@ -33,7 +33,7 @@ The script monitors server logs to translate gameplay into experience points (XP
 | \`!bet <name> <amt>\` | Bet on another player to win their next fight. |
 | \`!top\` / \`!wealth\` | View the XP or Credit leaderboards. |
 
-#### **A. Single Server Setup (`start_chaos.sh`)**
+#### **A. Single Server Setup **
 Best for a standalone server using the default `chaos.cfg`.
 ```bash
 ./start_chaos.sh start    # Starts Chaos in a background screen session
