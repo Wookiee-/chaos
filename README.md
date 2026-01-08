@@ -1,4 +1,3 @@
-cat << 'EOF' > README.md
 # MBII Chaos Plugin
 
 A Python-based RCON and log-parsing integration for Movie Battles II. This plugin transforms a standard server into a persistent RPG environment with real-time tracking of player progress, economy, and dynamic roles.
