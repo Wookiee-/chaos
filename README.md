@@ -1,49 +1,40 @@
+cat << 'EOF' > README.md
 # MBII Chaos Plugin
 
-A Python-based RCON integration for Movie Battles II that adds an RPG-style layer to your server. 
+A Python-based RCON and log-parsing integration for Movie Battles II. This plugin transforms a standard server into a persistent RPG environment with real-time tracking of player progress, economy, and dynamic roles.
 
-## 🛡️ Feature Deep-Dive
+## 🛡️ Core Systems & Features
 
-### 1. RPG Progression (XP & Leveling)
-* [cite_start]**XP Economy**: Players earn a configurable amount of XP per kill and lose XP upon death[cite: 1].
-* [cite_start]**Leveling Thresholds**: The `xp_per_level` setting determines the difficulty of reaching the next rank[cite: 1].
-* [cite_start]**Persistence**: All progress is stored in a local JSON database[cite: 1].
+### 1. Persistent RPG Progression
+The script monitors server logs for kill/death events and translates them into experience points (XP).
+* **XP Economy**: Rewards are configurable; default settings grant 25 XP per kill and deduct 15 XP upon death.
+* **Leveling System**: Players progress through 50 levels. The leveling difficulty is determined by the `xp_per_level` config setting.
+* **Career Paths & Titles**: Players can choose from various factions (e.g., Jedi, Sith, Mandalorian, ARC Trooper) and earn unique titles every 2.5 levels.
+* **JSON Database**: All data is stored in `players.json`, ensuring progress persists across restarts.
 
-### 2. Economy & Bounties
-* [cite_start]**Starting Capital**: New players are granted an initial credit balance[cite: 1].
-* [cite_start]**Passive Income**: Players earn a steady flow of credits while active on the server[cite: 1].
-* **Bounty Hunting**: Players can place hits on others; the killer automatically claims the reward.
+### 2. Economy & Bounty System
+* **Credit Gains**: Players start with a set balance and earn credits through kills and passive income while active.
+* **Bounties**: Players can place hits on others using `!bounty`. The script holds the credits in escrow and automatically pays the killer upon a successful kill.
 
 ### 3. High-Stakes Pazaak (Gambling)
-* [cite_start]**Difficulty Tuning**: Adjustable dealer behavior via `pazaak_difficulty`[cite: 1].
-* **Special Payouts**: Achieving a score of 20 grants a 3x payout.
+* **Dealer AI**: Players gamble credits against a "House" AI with adjustable difficulty levels.
+* **Pazaak (20)**: Hitting exactly 20 triggers a special event, paying out 3x the player's wager.
 
-### 4. Advanced RCON Synchronization (Linux Fix)
-* **Multi-Packet Reconstruction**: Engineered to capture fragmented UDP packets on Linux, ensuring players in high Slot IDs (like Slot 17) are correctly indexed.
+### 4. Advanced RCON Synchronization (The Linux Fix)
+Standard RCON clients often fail on Linux MBII servers because the `status` response is fragmented across multiple UDP packets.
+* **Packet Reconstruction**: `chaos.py` uses a specialized loop to "listen" for all fragments of the server's response. 
+* **Slot ID Resolution**: This ensures that even players in high Slot IDs (like Slot 17) are correctly indexed.
 
-## 🛠️ Configuration & Management
+---
 
-### 1. Configuration (`chaos.cfg`)
- [cite_start][cite: 1]
-\`\`\`ini
-[SETTINGS]
-ip = 127.0.0.1
-port = 29070
-rcon = your_password
-logname = server.log
-xp_per_kill = 25
-xp_loss = 15
-xp_per_level = 250
-starting_credits = 100
-passive_credit_gain = 10
-db_file = players.json
-pazaak_difficulty = 15
-\`\`\`
+## 🛠️ Management & Execution
 
-### 2. Management Script (`start_chaos.sh`)
+### 🐧 Choice 1: Linux (Ubuntu/Debian)
 
-\`\`\`bash
-# Start: ./start_chaos.sh start
-# View: ./start_chaos.sh attach
-# Stop: ./start_chaos.sh stop
-\`\`\`
+#### **A. Single Server Setup (`start_chaos.sh`)**
+Best for a standalone server using the default `chaos.cfg`.
+```bash
+./start_chaos.sh start    # Starts Chaos in a background screen session
+./start_chaos.sh status   # Checks if the process is active
+./start_chaos.sh attach   # View live logs (Ctrl+A then D to detach)
+./start_chaos.sh stop     # Gracefully shuts down the plugin

@@ -93,7 +93,7 @@ class MBIIChaosPlugin:
         self.db_filename = 'players.json'
         self.load_config()
         self.players = []
-        self.db = ()
+        self.db = []
         self.current_server_mode = 0
         self.active_bets = {}
         self.active_pazaak = {} # NEW: Tracks active card games
@@ -101,7 +101,7 @@ class MBIIChaosPlugin:
 
     def load_config(self):
         config = configparser.ConfigParser()
-        # Find the actual directory of chaos.py
+        # Uses absolute pathing regardless of OS
         base_dir = os.path.dirname(os.path.abspath(__file__))
         config_path = os.path.join(base_dir, self.config_file)
         
@@ -111,9 +111,9 @@ class MBIIChaosPlugin:
         config.read(config_path)
         self.settings = dict(config['SETTINGS'])
         
-        # Ensure the JSON file path is absolute for Linux permissions
-        fname = self.settings.get('db_file', 'players.json')
-        self.db_filename = os.path.join(base_dir, fname)
+        # Ensure the JSON database also uses compatible paths
+        db_name = self.settings.get('db_file', 'players.json')
+        self.db_filename = os.path.join(base_dir, db_name)
         
     def load_db(self):
         if os.path.exists(self.db_filename):
@@ -130,42 +130,39 @@ class MBIIChaosPlugin:
             self.db = []
 
     def save_db(self):
-        # 1. Start with the existing list in memory
-        # If self.db isn't a list yet, force it to be one
+        # Fix the tuple error: Ensure self.db is a list
         if not isinstance(self.db, list):
             self.db = list(self.db) if self.db else []
 
-        # 2. Update self.db with current session data
+        # Update DB list with current session data
         for p in self.players:
-            # Skip invalid entries (IPs or blanks)
-            if not p.name or "." in p.name or ":" in p.name:
+            if not p.name or re.match(r'^\d+\.\d+\.\d+\.\d+:\d+$', p.name):
                 continue
 
-            found = False
-            for entry in self.db:
-                if entry["name"] == p.name:
-                    entry.update({
-                        "xp": p.xp, "credits": p.credits, 
-                        "kills": p.kills, "deaths": p.deaths, "faction": p.faction
-                    })
-                    found = True
-                    break
+            entry = next((item for item in self.db if item["name"] == p.name), None)
+            data = {
+                "name": p.name, "xp": p.xp, "credits": p.credits,
+                "kills": p.kills, "deaths": p.deaths, "faction": p.faction
+            }
             
-            if not found:
-                self.db.append({
-                    "name": p.name, "xp": p.xp, "credits": p.credits,
-                    "kills": p.kills, "deaths": p.deaths, "faction": p.faction
-                })
+            if entry:
+                entry.update(data)
+            else:
+                self.db.append(data)
 
-        # 3. Secure Write for Linux
+        # Secure Atomic Write
         try:
-            with open(self.db_filename, "w") as f:
+            temp_name = self.db_filename + ".tmp"
+            with open(temp_name, "w") as f:
                 json.dump(self.db, f, indent=4)
                 f.flush()
-                os.fsync(f.fileno()) # Forces the OS to write to disk
+                os.fsync(f.fileno())
+            
+            # This 'replace' is atomic on Linux - the old file is never "half-written"
+            os.replace(temp_name, self.db_filename)
             return True
         except Exception as e:
-            print(f"[!] Linux Save Error: {e}")
+            print(f"[!] Database Save Error: {e}")
             return False
 
     def sync_player(self, sid, name): 
@@ -372,26 +369,37 @@ class MBIIChaosPlugin:
         self.save_db()
 
     def handle_chat(self, sid, name, msg):
+        # 1. Clean the incoming name and message
         clean_name = re.sub(r'\^\d', '', name).strip().lower()
+        msg = msg.lower().strip()
         
-        # 1. Try to find the player
+        if not msg.startswith("!"):
+            return
+
+        # 2. Find or Re-sync the player
         p = next((x for x in self.players if (sid != -1 and x.id == sid) or 
                   (clean_name in x.name.lower()) or 
                   (x.name.lower() in clean_name)), None)
         
-        # 2. Re-sync if not found
         if not p:
-            # print(f"[*] Name '{clean_name}' not in memory. Re-syncing status...")
             self.sync_current_players()
             p = next((x for x in self.players if (sid != -1 and x.id == sid) or 
                       (clean_name in x.name.lower())), None)
 
-        # 3. THE FIX: If player is STILL not found, stop here!
-        if p:
-            target_sid = p.id
-        else:
-            # print(f"[!] Could not resolve target_sid for {clean_name}. Ignoring command.")
-            return  # This prevents the UnboundLocalError
+        if not p:
+            return  # Safety exit if player isn't on the server
+
+        # 3. GLOBAL SYNC: Pull latest stats from DB before processing command
+        # This ensures !top and !bank are ALWAYS accurate to the last kill
+        db_entry = next((item for item in self.db if item["name"] == p.name), None)
+        if db_entry:
+            p.xp = db_entry.get("xp", p.xp)
+            p.credits = db_entry.get("credits", p.credits)
+            p.kills = db_entry.get("kills", p.kills)
+            p.deaths = db_entry.get("deaths", p.deaths)
+
+        # 4. Now handle all commands using 'p'
+        target_sid = p.id
             
         msg = msg.lower().strip()
 
