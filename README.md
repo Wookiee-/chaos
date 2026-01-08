@@ -17,7 +17,7 @@ The `chaos.py` script is a comprehensive RPG-style server management system for 
 * **Banking System**: Players accumulate credits via passive gains or kills to spend on bounties, bets, or pazaak.
 * **Pazaak (Casino)**: A card game where players can `!hit` or `!stand` against a dealer, featuring a **3x payout** for hitting exactly 20.
 * **Bounty & Bet Systems**: Place bounties on rivals or bet on allies; successful kills collect these pots and announce payouts to the server.
-* **Peer-to-Peer Transfers**: The `!pay` command allows players to transfer credits directly to one another[cite: 1].
+* **Peer-to-Peer Transfers**: The `!pay` command allows players to transfer credits directly to one another.
 
 ### 4. Advanced Combat Logic
 * **Force Surge**: A rare (5%) chance on any kill to trigger a "Force Surge," granting the killer **3x XP**
@@ -47,9 +47,8 @@ The `chaos.py` script is a comprehensive RPG-style server management system for 
 ### 🐧 Linux (Ubuntu/Debian)
 Requires `screen` and `python3`.
 * **Single Server**: `./start_chaos.sh {start|stop|status|attach}`
-* **Multi-Server**: `./multi_chaos.sh start server1.cfg` 
+* **Multi-Server**: `./multi_chaos.sh start server1.cfg`. 
 
 ### 🪟 Windows
 * **Menu Management**: Run `start_chaos.bat` for a guided UI
 * **Multi-Server**: `multi_chaos.bat start server1.cfg`.
-
