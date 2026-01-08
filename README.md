@@ -1,30 +1,37 @@
 # MBII Chaos Plugin
-A Python-based RCON and log-parsing integration for **Movie Battles II**. This plugin transforms a standard server into a persistent RPG environment with real-time tracking of player progress, economy, and dynamic roles.
+The `chaos.py` script is a comprehensive RPG-style server management system for **Movie Battles II** that integrates character progression, a dynamic economy, and real-time server-state awareness[cite: 1, 2].
 
 ## 🛡️ Core Systems
 
-### 1. Persistent RPG Progression
-The script monitors server logs to translate gameplay into experience points (XP).
-* **XP Economy**: Configurable rewards (default: +25 XP per kill, -15 XP per death).
-* **Leveling System**: 50 levels of progression based on the \`xp_per_level\` setting.
-* **Career Paths**: 14+ factions including Jedi, Sith, Mandalorian, and ARC Trooper with unique titles every 2.5 levels.
-* **Data Persistence**: All stats are stored in \`players.json\`.
+### 1. The Core Progression System
+* **20-Tier Career Paths**: There are 14 distinct career paths (7 Hero, 7 Villain), each containing 20 unique titles that evolve every 2.5 levels[cite: 1, 2].
+* **Leveling & XP**: Players earn XP through kills and lose a configurable amount upon death[cite: 1, 2]. "Last Stand Protection" prevents XP from dropping below zero[cite: 1].
+* **Dynamic Title Logic**: The `get_title` system automatically assigns colors (Cyan for Heroes, Red for Villains) and ranks based on the player's chosen faction and current level[cite: 1].
 
-### 2. Economy & Bounties
-* **Credits**: Earned through kills and passive income.
-* **Bounties**: Use \`!bounty <name> <amount>\` to place hits on players. Credits are held in escrow and paid to the killer automatically.
-* **Transfers**: Players can send funds to others using the \`!pay\` command.
+### 2. "Smart Switch" Mode Awareness
+* **Duel Mode Restriction (Mode 3)**: The script scans the server's `g_authenticity` setting; if set to Mode 3, all players are visually restricted to "Jedi" or "Sith" titles[cite: 1].
+* **Open Mode (0, 1, 2, 4)**: In all other modes, the full diversity of careers (Mandalorian, ARC Trooper, Droideka, etc.) is unlocked[cite: 1].
+* **Command Blocking**: If a player attempts to change to a non-Force career while in Duel Mode, the script blocks the change with an error message[cite: 1].
 
-### 3. Pazaak Gambling
-* **High-Stakes AI**: Play against a "House" AI with adjustable difficulty.
-* **Special Rules**: Hitting exactly 20 pays out **3x the wager**.
-* **Dealer Pot**: Failed bets increase the "Dealer Bonus," which can be won by beating the house.
+### 3. Economic & Gambling Features
+* **Banking System**: Players accumulate credits via passive gains or kills to spend on bounties, bets, or pazaak[cite: 1].
+* **Pazaak (Casino)**: A card game where players can `!hit` or `!stand` against a dealer, featuring a **3x payout** for hitting exactly 20[cite: 1, 2].
+* **Bounty & Bet Systems**: Place bounties on rivals or bet on allies; successful kills collect these pots and announce payouts to the server[cite: 1].
+* **Peer-to-Peer Transfers**: The `!pay` command allows players to transfer credits directly to one another[cite: 1].
 
-### 4. Advanced RCON (Linux Fix)
-* **Packet Reconstruction**: Solves the "fragmented UDP" issue on Linux MBII servers to ensure reliable communication.
-* **Slot ID Resolution**: Correct indexing for players in high-numbered slots (e.g., Slot 17+).
+### 4. Advanced Combat Logic
+* **Force Surge**: A rare (5%) chance on any kill to trigger a "Force Surge," granting the killer **3x XP**[cite: 1].
+* **Nemesis System**: Tracks "dominance" by announcing when one player kills another three times in a row[cite: 1].
+* **Global Kill Feed**: Replaces standard messages with high-visibility RCON announcements showing titles, XP gains, and credit rewards[cite: 1].
 
-## 🛠️ Management & Commands
+### 5. Persistent Infrastructure
+* **Shared Database**: Uses `players.json` to store XP, credits, and faction choices across server restarts[cite: 1, 2].
+* **Name-Based Syncing**: Recognizes returning players by name or slot ID, ensuring data consistency even via private tells[cite: 1].
+* **Multi-Server Ready**: Easily pointed at different IP addresses and ports via `.cfg` files[cite: 1, 3, 4].
+
+---
+
+## 🛠️InGame Commands
 | Command | Function |
 | :--- | :--- |
 | \`!rank\` / \`!level\` | Check your current level, title, and XP progress. |
@@ -33,10 +40,16 @@ The script monitors server logs to translate gameplay into experience points (XP
 | \`!bet <name> <amt>\` | Bet on another player to win their next fight. |
 | \`!top\` / \`!wealth\` | View the XP or Credit leaderboards. |
 
-#### **A. Single Server Setup **
-Best for a standalone server using the default `chaos.cfg`.
-```bash
-./start_chaos.sh start    # Starts Chaos in a background screen session
-./start_chaos.sh status   # Checks if the process is active
-./start_chaos.sh attach   # View live logs (Ctrl+A then D to detach)
-./start_chaos.sh stop     # Gracefully shuts down the plugin
+---
+
+## 🛠️ Management & Execution
+
+### 🐧 Linux (Ubuntu/Debian)
+Requires `screen` and `python3`.
+* **Single Server**: `./start_chaos.sh {start|stop|status|attach}`
+* **Multi-Server**: `./multi_chaos.sh start server1.cfg` [cite: 3]
+
+### 🪟 Windows
+* **Menu Management**: Run `start_chaos.bat` for a guided UI[cite: 8].
+* **Multi-Server**: `multi_chaos.bat start server1.cfg`[cite: 4].
+
