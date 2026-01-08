@@ -31,7 +31,7 @@ The `chaos.py` script is a comprehensive RPG-style server management system for 
 
 ---
 
-## 🛠️InGame Commands
+## 🛠️Game Commands
 | Command | Function |
 | :--- | :--- |
 | \`!rank\` / \`!level\` | Check your current level, title, and XP progress. |
@@ -39,6 +39,43 @@ The `chaos.py` script is a comprehensive RPG-style server management system for 
 | \`!pazaak <amt>\` | Start a card game against the dealer. |
 | \`!bet <name> <amt>\` | Bet on another player to win their next fight. |
 | \`!top\` / \`!wealth\` | View the XP or Credit leaderboards. |
+
+---
+
+## ⚙️ Plugin Configuration (`chaos.cfg`)
+The `logname` must be the **absolute path** to your server's log file so the plugin can read game events as they happen.
+
+```ini
+[SETTINGS]
+ip = 127.0.0.1
+port = 29070
+rcon = your_password
+
+# --- LOG PATH EXAMPLES ---
+# Linux: /home/username/mbii/GameDatabase/MBII/server.log
+# Windows: C:\Games\MBII\GameDatabase\MBII\server.log
+logname = /path/to/your/server.log
+
+db_file = players.json
+xp_per_kill = 25
+xp_loss = 15
+xp_per_level = 250
+starting_credits = 100
+pazaak_difficulty = 15
+```
+---
+
+### Server.cfg
+
+### 💡 Pro-Tip for Linux Paths
+If you are running multiple servers on one Linux machine, your path will typically look like this:
+`/home/mbiiez/server1/MBII/server.log`
+
+### 💡 Pro-Tip for Windows Paths
+In Python (which `chaos.py` uses), backslashes in Windows paths can sometimes cause issues. It is often safer to use double backslashes or forward slashes in the config file:
+`logname = C:\\Users\\Admin\\Desktop\\MBII\\GameDatabase\\MBII\\server.log`
+**OR**
+`logname = C:/Users/Admin/Desktop/MBII/GameDatabase/MBII/server.log`
 
 ---
 
