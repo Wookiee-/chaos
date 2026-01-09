@@ -21,6 +21,7 @@ class Player:
         self.nemesis_map = {} 
         self.xp_per_lvl = int(config['xp_per_level'])
         self.dealer_credits = 0
+        self.bounty = {}
 
     @property
     def level(self):
@@ -234,37 +235,46 @@ class MBIIChaosPlugin:
             print("[!] RCON Status failed: No response from server.")
             return
         
-        # Clear IDs of players currently in list to prevent "ghost" SIDs
-        # But keep the objects to retain session XP
         lines = response.split('\n')
         for line in lines:
-            # Matches the SID and the start of the name column
             m = re.search(r'^\s*(\d+)\s+\d+\s+\d+\s+(.*)', line)
             if m:
                 sid = int(m.group(1))
-                # The remainder of the line usually contains name, IP, and Rate
                 remainder = m.group(2).strip()
-                
-                # Split by spaces and stop at the IP:Port column
                 parts = remainder.split()
                 name_parts = []
                 for part in parts:
-                    if ":" in part and "." in part: break # Hit the IP column
+                    if ":" in part and "." in part: break 
                     name_parts.append(part)
                 
                 full_name = " ".join(name_parts)
                 clean_name = re.sub(r'\^\d', '', full_name).strip()
                 
                 if clean_name:
-                    # Look for existing player and update their ID
                     p = next((x for x in self.players if x.name == clean_name), None)
                     if p:
                         if p.id != sid:
                             print(f"[*] Updating {p.name} SID: {p.id} -> {sid}")
                             p.id = sid
                     else:
-                        # New player joining during sync
                         self.sync_player(sid, clean_name)
+
+        active_sids = [int(re.search(r'^\s*(\d+)', line).group(1)) for line in lines if re.search(r'^\s*(\d+)', line)]
+        
+        for p_mem in self.players[:]:
+            is_spec = any(f"{p_mem.id} " in line and ("(spec)" in line.lower() or "spectator" in line.lower()) for line in lines)
+            
+            if p_mem.id not in active_sids or is_spec:
+                if p_mem.bounty > 0:
+                    refund_amt = p_mem.bounty
+                    p_mem.credits += refund_amt
+                    p_mem.bounty = 0
+                    print(f"[*] Refunding {refund_amt}cr to {p_mem.name} (Left or Spectator)")
+                    
+                    if not is_spec:
+                        self.players.remove(p_mem)
+                    
+                    self.save_db()      
 
     def check_rank_change(self, player, old_level):
         new_level = player.level
@@ -339,7 +349,7 @@ class MBIIChaosPlugin:
                 self.active_bets.pop(victim.id, None)          # Victim loses their bet pot
                 
                 killer.credits += (cred_gain + b_reward + bet_reward)
-                victim.bounty = 0  # Bounty is collected
+                victim.bounty = {}  # Bounty is collected
 
                 killer.kills += 1; killer.streak += 1
                 
@@ -507,7 +517,7 @@ class MBIIChaosPlugin:
             diff = int(self.settings.get('pazaak_difficulty', 17))
             dealer_hand = random.randint(diff, 20)
             
-            self.send_rcon(f'svtell {target_sid} "^5[PAZAAK] ^7{p.name}(^2{game["score"]}^7) vs Dealer(^1{dealer_hand}^7)"')
+            self.send_rcon(f'say "^5[PAZAAK] ^7{p.name}(^2{game["score"]}^7) vs Dealer(^1{dealer_hand}^7)"')
             
             if game["score"] > dealer_hand:
                 # Player Wins: Double bet + Dealer's accumulated pool
@@ -532,8 +542,13 @@ class MBIIChaosPlugin:
         elif msg == "!stats": 
             self.send_rcon(f'svtell {target_sid} "^7STATS: {p.name} ^2Kills: {p.kills} ^1Deaths: {p.deaths}"')
         elif msg == "!wealth":
-            # Keep wealth as the Top 5 leaderboard
+            for p_online in self.players:
+                entry = next((item for item in self.db if item["name"] == p_online.name), None)
+                if entry:
+                    entry["credits"] = p_online.credits
+
             sorted_wealth = sorted(self.db, key=lambda x: x.get('credits', 0), reverse=True)
+            
             txt = "^3Wealthy 5: " + " ".join([f"^2{i+1}.^5{x['name']}(^3{x.get('credits',0)}cr^2)" for i,x in enumerate(sorted_wealth[:5])])
             self.send_rcon(f'say "{txt}"')
         elif msg == "!bank" or msg == "!wallet" or msg == "!credits":
@@ -547,21 +562,47 @@ class MBIIChaosPlugin:
                 txt = "^1Active Bounties: " + " ".join([f"^5{p.name}(^1{p.bounty}^7)" for p in active_bounties])
                 self.send_rcon(f'say "{txt}"')       
         elif msg.startswith("!bounty"):
+            parts = msg.split(" ")
+            
+            if len(parts) == 2 and parts[1] == "cancel":
+
+                found_bounty = False
+                for target in self.players:
+                    if isinstance(target.bounty, dict) and p.name in target.bounty:
+                        refund = target.bounty.pop(p.name)
+                        p.credits += refund
+                        self.send_rcon(f'say "^5[BANK] ^7{p.name} cancelled their bounty on {target.name}. ^2{refund}cr ^7refunded."')
+                        found_bounty = True
+                        self.save_db()
+                        break 
+                
+                if not found_bounty:
+                    self.send_rcon(f'svtell {target_sid} "^1Error: ^7You do not have any active bounties to cancel."')
+                return
+
             try:
-                parts = msg.split(" ")
                 if len(parts) < 3:
-                    self.send_rcon(f'svtell {target_sid} "^7Usage: !bounty <name> <amount>"')
+                    self.send_rcon(f'svtell {target_sid} "^3Usage: !bounty <name> <amount> ^7OR ^3!bounty cancel"')
                     return
-                target = next((x for x in self.players if parts[1].lower() in x.name.lower()), None)
+
+                target_name = parts[1].lower()
                 amount = int(parts[2])
+                target = next((x for x in self.players if target_name in x.name.lower()), None)
+
                 if target and p.credits >= amount and amount > 0:
+                    if not isinstance(target.bounty, dict): target.bounty = {}
+                    
                     p.credits -= amount
-                    target.bounty += amount
-                    self.send_rcon(f'say "^1WAGER: ^7{p.name} put a ^3{amount} Credit ^7bounty on {target.name}!"')
+                    # Add to existing contribution or start a new one
+                    target.bounty[p.name] = target.bounty.get(p.name, 0) + amount
+                    
+                    total = sum(target.bounty.values())
+                    self.send_rcon(f'say "^1WAGER: ^7{p.name} put a ^3{amount}cr ^7bounty on {target.name}! Total: ^1{total}cr^7!"')
                     self.save_db()
                 elif not target:
                     self.send_rcon(f'svtell {target_sid} "^1Error: ^7Player \'{parts[1]}\' not found."')
-            except: self.send_rcon(f'svtell {target_sid} "^7Usage: !bounty <name> <amount>"')
+            except ValueError:
+                self.send_rcon(f'svtell {target_sid} "^1Error: ^7Amount must be a number."')
         elif msg.startswith("!bet"):
             try:
                 parts = msg.split(" ")
@@ -678,6 +719,24 @@ class MBIIChaosPlugin:
                                 sid, name = int(m.group(1)), m.group(2)
                                 # Only keeps the player data synced; no chat announcement sent
                                 self.sync_player(sid, name)
+                        if "ClientDisconnect:" in line or "entered the game" in line:
+                            # 1. Identify who left/specced
+                            m = re.search(r'(ClientDisconnect:|entered the game:)\s*(\d+)', line)
+                            if m:
+                                target_sid = int(m.group(2))
+                                target_p = next((x for x in self.players if x.id == target_sid), None)
+                                
+                                # 2. If they had a bounty, refund all contributors immediately
+                                if target_p and isinstance(target_p.bounty, dict) and target_p.bounty:
+                                    for contributor_name, amount in target_p.bounty.items():
+                                        # Find the contributor to give credits back
+                                        contributor = next((x for x in self.players if x.name == contributor_name), None)
+                                        if contributor:
+                                            contributor.credits += amount
+                                            self.send_rcon(f'svtell {contributor.id} "^5[BANK] ^7Target left/specced. ^2{amount}cr ^7bounty refunded."')
+                                    
+                                    target_p.bounty = {} # Clear the bounty
+                                    self.save_db()        
                         elif "Kill: " in line:
                             m = re.search(r'Kill:\s*(\d+)\s+(\d+)\s+(\d+):', line)
                             if m:
