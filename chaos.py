@@ -97,6 +97,7 @@ class MBIIChaosPlugin:
         self.current_server_mode = 0
         self.active_bets = {}
         self.active_pazaak = {} # NEW: Tracks active card games
+        self.dealer_credits = 0
         self.load_db()
 
     def load_config(self):
@@ -229,31 +230,41 @@ class MBIIChaosPlugin:
 
     def sync_current_players(self):
         response = self.send_rcon("status", True)
-        if not response: return
+        if not response: 
+            print("[!] RCON Status failed: No response from server.")
+            return
         
+        # Clear IDs of players currently in list to prevent "ghost" SIDs
+        # But keep the objects to retain session XP
         lines = response.split('\n')
         for line in lines:
-            m = re.search(r'^\s*(\d+)\s+', line)
+            # Matches the SID and the start of the name column
+            m = re.search(r'^\s*(\d+)\s+\d+\s+\d+\s+(.*)', line)
             if m:
                 sid = int(m.group(1))
-                # Split the line by spaces to handle Linux column formatting 
-                parts = line.split()
+                # The remainder of the line usually contains name, IP, and Rate
+                remainder = m.group(2).strip()
                 
-                # Ensure there are enough segments to contain a name 
-                if len(parts) > 4:
-                    name_parts = []
-                    for p in parts[3:]:
-                        # Stop collecting name parts when we hit the IP:Port column 
-                        if ":" in p and "." in p: break 
-                        name_parts.append(p)
-                    
-                    # Rebuild the name and strip color codes 
-                    name_raw = " ".join(name_parts)
-                    name_final = re.sub(r'\^\d', '', name_raw).strip()
-                    
-                    if name_final:
-                        # Link the Slot ID to the player object in memory 
-                        self.sync_player(sid, name_final)
+                # Split by spaces and stop at the IP:Port column
+                parts = remainder.split()
+                name_parts = []
+                for part in parts:
+                    if ":" in part and "." in part: break # Hit the IP column
+                    name_parts.append(part)
+                
+                full_name = " ".join(name_parts)
+                clean_name = re.sub(r'\^\d', '', full_name).strip()
+                
+                if clean_name:
+                    # Look for existing player and update their ID
+                    p = next((x for x in self.players if x.name == clean_name), None)
+                    if p:
+                        if p.id != sid:
+                            print(f"[*] Updating {p.name} SID: {p.id} -> {sid}")
+                            p.id = sid
+                    else:
+                        # New player joining during sync
+                        self.sync_player(sid, clean_name)
 
     def check_rank_change(self, player, old_level):
         new_level = player.level
@@ -369,37 +380,35 @@ class MBIIChaosPlugin:
         self.save_db()
 
     def handle_chat(self, sid, name, msg):
-        # 1. Clean the incoming name and message
         clean_name = re.sub(r'\^\d', '', name).strip().lower()
         msg = msg.lower().strip()
         
         if not msg.startswith("!"):
             return
 
-        # 2. Find or Re-sync the player
-        p = next((x for x in self.players if (sid != -1 and x.id == sid) or 
-                  (clean_name in x.name.lower()) or 
-                  (x.name.lower() in clean_name)), None)
+        # RESOLVE PLAYER: Try SID first (most reliable), then Name
+        p = None
+        # Only use the ID if it's a real slot (0-31) and not a timestamp fragment
+        if sid != -1 and sid < 64:
+            p = next((x for x in self.players if x.id == sid), None)
         
         if not p:
-            self.sync_current_players()
-            p = next((x for x in self.players if (sid != -1 and x.id == sid) or 
-                      (clean_name in x.name.lower())), None)
+            p = next((x for x in self.players if (clean_name in x.name.lower()) or 
+                      (x.name.lower() in clean_name)), None)
 
         if not p:
-            return  # Safety exit if player isn't on the server
+            self.sync_current_players()
+            p = next((x for x in self.players if (clean_name in x.name.lower())), None)
 
-        # 3. GLOBAL SYNC: Pull latest stats from DB before processing command
-        # This ensures !top and !bank are ALWAYS accurate to the last kill
-        db_entry = next((item for item in self.db if item["name"] == p.name), None)
-        if db_entry:
-            p.xp = db_entry.get("xp", p.xp)
-            p.credits = db_entry.get("credits", p.credits)
-            p.kills = db_entry.get("kills", p.kills)
-            p.deaths = db_entry.get("deaths", p.deaths)
+        if not p:
+            return 
 
-        # 4. Now handle all commands using 'p'
+        # Update the player object with the correct Slot ID from the log
+        if sid != -1 and sid < 64:
+            p.id = sid
+            
         target_sid = p.id
+        # print(f"[DEBUG] {p.name} (Slot {target_sid}) used {msg}")
             
         msg = msg.lower().strip()
 
@@ -650,16 +659,19 @@ class MBIIChaosPlugin:
                         if not line: continue
                         # Keep your existing InitGame logic as a backup for map changes
                         if "InitGame:" in line: 
-                            self.sync_current_players()
+                            self.players = [] 
+                            
+                            # Re-detect game mode (Duel vs Open)
                             line_low = line.lower()
-                            if "g_authenticity" in line_low:
-                                parts = line_low.split("g_authenticity")
-                                if len(parts) > 1 and "3" in parts[1][:2]:
-                                    self.current_server_mode = 3
-                                else:
-                                    self.current_server_mode = 0
+                            if "g_authenticity\\3" in line_low.replace(" ", ""):
+                                self.current_server_mode = 3
                             else:
                                 self.current_server_mode = 0
+                                
+                            # Re-scan the server immediately to get new SIDs
+                            time.sleep(2) # Wait a moment for server to stabilize
+                            self.sync_current_players()
+                            continue
                         if "ClientUserinfoChanged:" in line:
                             m = re.search(r'ClientUserinfoChanged:\s*(\d+)\s*n\\([^\\]+)', line)
                             if m:
@@ -671,32 +683,32 @@ class MBIIChaosPlugin:
                             if m:
                                 self.process_kill(m.group(1), m.group(2), m.group(3), line)
                         elif " say: " in line:
-                            # Matches: 1271:1517: say: ^0[^7Valzhar^0]: "!title test"
-                            # This captures the name between [^7 and ^0]
-                            m = re.search(r'say:\s*.*?\s*\[\^7(.*?)\^0\]:\s*"(.*)"', line)
-                            if m:
-                                name_raw = m.group(1).strip()
-                                message = m.group(2).strip().replace('"', '')
-                                
-                                # We pass -1 for SID because we will find the 17 in handle_chat
-                                self.handle_chat(-1, name_raw, message)
+                            # Strict Regex: Matches a space, then 1-2 digits, then ': say:'
+                            # This prevents grabbing the timestamp (like 11:15)
+                            sid_match = re.search(r'\s(\d{1,2}):\s+say:', line)
+                            log_sid = int(sid_match.group(1)) if sid_match else -1
+                            
+                            m_chat = re.search(r'say:\s*(.*?):\s*"(.*)"', line)
+                            if m_chat:
+                                name_raw = m_chat.group(1).strip()
+                                name_clean = re.sub(r'\^\d', '', name_raw).strip()
+                                message = m_chat.group(2).strip().replace('"', '')
+                                self.handle_chat(log_sid, name_clean, message)
+
                         elif "tell:" in line:
                             try:
-                                # Try the bracketed version first (JMT style)
-                                m = re.search(r'tell:.*?\]\^?\d?(.*?) to .*?: (.*)', line)
+                                # Strict Regex for private messages
+                                sid_match = re.search(r'\s(\d{1,2}):\s+tell:', line)
+                                log_sid = int(sid_match.group(1)) if sid_match else -1
                                 
-                                # Fallback: Try the normal version (Kanan style)
-                                if not m:
-                                    # Matches: "1286:51tell: ^4Kanan to ^0...: message"
-                                    m = re.search(r'tell:\s*\^?\d?(.*?) to .*?: (.*)', line)
-
-                                if m:
-                                    name_raw = m.group(1).strip()
+                                m_tell = re.search(r'tell:\s*(.*?) to .*?:\s*"(.*)"', line)
+                                if m_tell:
+                                    name_raw = m_tell.group(1).strip()
                                     name_clean = re.sub(r'\^\d', '', name_raw).strip()
-                                    message = m.group(2).strip().replace('"', '')
-                                    self.handle_chat(-1, name_clean, message)
+                                    message = m_tell.group(2).strip().replace('"', '')
+                                    self.handle_chat(log_sid, name_clean, message)
                             except Exception as e:
-                                print(f"DEBUG ERROR: {e}")
+                                print(f"[!] Tell Parsing Error: {e}")
                 last_sz = curr_sz
             time.sleep(0.2)
 
