@@ -1,4 +1,4 @@
-# MBII Chaos Plugin
+# MBII Chaos Server-Side Plugin
 The `chaos.py` script is a comprehensive RPG-style server management system for **Movie Battles II** that integrates character progression, a dynamic economy, and real-time server-state awareness.
 
 ## 🛡️ Core Systems
