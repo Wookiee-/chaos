@@ -1,4 +1,4 @@
-# MBII Chaos Server-Side Plugin
+# MBII Chaos Plugin
 The `chaos.py` script is a comprehensive RPG-style server management system for **Movie Battles II** that integrates character progression, a dynamic economy, and real-time server-state awareness.
 
 ## 🛡️ Core Systems
@@ -25,9 +25,9 @@ The `chaos.py` script is a comprehensive RPG-style server management system for 
 * **Global Kill Feed**: Replaces standard messages with high-visibility RCON announcements showing titles, XP gains, and credit rewards
 
 ### 5. Persistent Infrastructure
-* **Shared Database**: Uses `players.json` to store XP, credits, and faction choices across server restarts
-* **Name-Based Syncing**: Recognizes returning players by name or slot ID, ensuring data consistency even via private tells
-* **Multi-Server Ready**: Easily pointed at different IP addresses and ports via `.cfg` files
+* **Shared Database**: SQLite Database: Migrated from JSON to players.db. It uses clean_name (normalized via unicodedata) as the PRIMARY KEY to ensure players keep their stats regardless of name symbols or color codes.
+* **Name-Based Syncing**: The sync_current_players function uses a Regex anchor `r'^\s*(\d+)\s+-?\d+\s+\d+\s+(.*?)\s+\d+\s+\d{1,3}\.\d'` to correctly parse names even if they contain spaces or ASCII symbols.
+* **Multi-Server Ready**: Designed for multi-port environments. Every database connection uses timeout=20 to prevent "Database is locked" errors when two or more server ports write to the shared players.db simultaneously.
 
 ---
 

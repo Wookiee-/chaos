@@ -6,6 +6,18 @@ import socket
 import sys
 import random
 import configparser
+import sqlite3
+import unicodedata
+
+def normalize(name):
+    if not name: return ""
+    # 1. Strip MBII color codes
+    name = re.sub(r'\^.', '', name)
+    # 2. Convert accented characters (å -> a)
+    name = unicodedata.normalize('NFKD', name).encode('ascii', 'ignore').decode('ascii')
+    # 3. Strip EVERYTHING that isn't a letter or number
+    name = re.sub(r'[^a-zA-Z0-9]', '', name)
+    return name.lower().strip()
 
 class Player:
     def __init__(self, sid, name, xp=0, kills=0, deaths=0, faction="jedi", credits=0, config=None):
@@ -21,7 +33,6 @@ class Player:
         self.nemesis_map = {} 
         self.xp_per_lvl = int(config['xp_per_level'])
         self.dealer_credits = 0
-        self.bounty = {}
 
     @property
     def level(self):
@@ -82,7 +93,7 @@ class Player:
             bar = "^2" + "I" * filled + "^7" + "." * (10 - filled)
             
             xp_left = self.xp_per_lvl - xp_into_level
-            return f"[{bar}^7] {int(percentage * 100)}% (^3{xp_left} XP left^7)"        
+            return f"[{bar}^7] {int(percentage * 100)}% (^3{xp_left} XP left^7)"               
 
 class MBIIChaosPlugin:
     def __init__(self):
@@ -91,15 +102,31 @@ class MBIIChaosPlugin:
         else:
             self.config_file = 'chaos.cfg' # Default fallback
         self.settings = {}
-        self.db_filename = 'players.json'
+        self.db_filename = 'players.db'
         self.load_config()
         self.players = []
-        self.db = []
         self.current_server_mode = 0
         self.active_bets = {}
         self.active_pazaak = {} # NEW: Tracks active card games
-        self.dealer_credits = 0
-        self.load_db()
+        self.dealer_credits = 0  
+        self.init_sqlite()
+
+    def init_sqlite(self):
+            with sqlite3.connect(self.db_filename, timeout=20) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS players (
+                        name TEXT,
+                        clean_name TEXT PRIMARY KEY,
+                        xp INTEGER DEFAULT 0,
+                        credits INTEGER DEFAULT 0,
+                        kills INTEGER DEFAULT 0,
+                        deaths INTEGER DEFAULT 0,
+                        career TEXT DEFAULT 'Jedi Pup',
+                        faction TEXT DEFAULT 'jedi'
+                    )
+                ''')
+                conn.commit()
 
     def load_config(self):
         config = configparser.ConfigParser()
@@ -113,91 +140,43 @@ class MBIIChaosPlugin:
         config.read(config_path)
         self.settings = dict(config['SETTINGS'])
         
-        # Ensure the JSON database also uses compatible paths
-        db_name = self.settings.get('db_file', 'players.json')
+        # Ensure the SQL database also uses compatible paths
+        db_name = self.settings.get('db_file', 'players.db')
         self.db_filename = os.path.join(base_dir, db_name)
-        
-    def load_db(self):
-        if os.path.exists(self.db_filename):
-            try:
-                with open(self.db_filename, "r") as f:
-                    data = json.load(f)
-                    # Force conversion to list to ensure .append() works
-                    self.db = list(data) if data else []
-                    print(f"[*] Loaded {len(self.db)} players from database.")
-            except Exception as e:
-                print(f"[!] Error loading DB: {e}")
-                self.db = []
-        else:
-            self.db = []
 
-    def save_db(self):
-        # Fix the tuple error: Ensure self.db is a list
-        if not isinstance(self.db, list):
-            self.db = list(self.db) if self.db else []
-
-        # Update DB list with current session data
-        for p in self.players:
-            if not p.name or re.match(r'^\d+\.\d+\.\d+\.\d+:\d+$', p.name):
-                continue
-
-            entry = next((item for item in self.db if item["name"] == p.name), None)
-            data = {
-                "name": p.name, "xp": p.xp, "credits": p.credits,
-                "kills": p.kills, "deaths": p.deaths, "faction": p.faction
-            }
+    def sync_player(self, sid, raw_name):
+        clean = normalize(raw_name)
+        with sqlite3.connect(self.db_filename, timeout=20) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT xp, kills, deaths, faction, credits FROM players WHERE clean_name = ?", (clean,))
+            data = cursor.fetchone()
             
-            if entry:
-                entry.update(data)
+            if data:
+                xp, kills, deaths, faction, credits = data
             else:
-                self.db.append(data)
-
-        # Secure Atomic Write
-        try:
-            temp_name = self.db_filename + ".tmp"
-            with open(temp_name, "w") as f:
-                json.dump(self.db, f, indent=4)
-                f.flush()
-                os.fsync(f.fileno())
-            
-            # This 'replace' is atomic on Linux - the old file is never "half-written"
-            os.replace(temp_name, self.db_filename)
-            return True
-        except Exception as e:
-            print(f"[!] Database Save Error: {e}")
-            return False
-
-    def sync_player(self, sid, name): 
-        if not name or "." in name or ":" in name:
-            return None
-
-        p = next((x for x in self.players if x.id == sid), None)
-        if p:
-            return p
-
-        db_e = next((item for item in self.db if item["name"] == name), None)
+                xp, kills, deaths, faction, credits = 0, 0, 0, "jedi", 100
+                cursor.execute("INSERT INTO players (name, clean_name, xp, kills, deaths, faction, credits) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                               (raw_name, clean, xp, kills, deaths, faction, credits))
+                conn.commit()
+                
+        # Remove old instance if exists in memory
+        self.players = [p for p in self.players if normalize(p.name) != clean]
         
-        p = Player(sid, name,
-                   xp=db_e.get("xp", 0) if db_e else 0,
-                   credits=db_e.get("credits", int(self.settings.get('starting_credits', 0))) if db_e else int(self.settings.get('starting_credits', 0)), 
-                   kills=db_e.get("kills", 0) if db_e else 0, 
-                   deaths=db_e.get("deaths", 0) if db_e else 0,
-                   faction=db_e.get("faction", "jedi") if db_e else "jedi",
-                   config=self.settings)
-        
+        # Match Player class arguments: (sid, name, xp, kills, deaths, faction, credits, config)
+        p = Player(sid, raw_name, xp, kills, deaths, faction, credits, self.settings)
         self.players.append(p)
-
-        if not db_e:
-            self.db.append({
-                "name": name, "xp": p.xp, "credits": p.credits,
-                "kills": p.kills, "deaths": p.deaths, "faction": p.faction
-            })
-        
-        # Move this OUTSIDE the 'if not db_e' block so it saves 
-        # whenever a player is synced or updated
-        self.save_db() 
-            
         return p
+
+    def save_player_stat(self, p):
+        """Saves a single player's stats to SQLite. Call this after kills or transactions."""
+        with sqlite3.connect(self.db_filename, timeout=20) as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                UPDATE players 
+                SET xp = ?, credits = ?, kills = ?, deaths = ?, faction = ?, name = ?
+                WHERE clean_name = ?
+            ''', (p.xp, p.credits, p.kills, p.deaths, p.faction, p.name, normalize(p.name)))
+            conn.commit()    
 
     def send_rcon(self, command, get_response=False):
         try:
@@ -231,50 +210,56 @@ class MBIIChaosPlugin:
 
     def sync_current_players(self):
         response = self.send_rcon("status", True)
-        if not response: 
-            print("[!] RCON Status failed: No response from server.")
-            return
+        if not response: return
         
         lines = response.split('\n')
-        for line in lines:
-            m = re.search(r'^\s*(\d+)\s+\d+\s+\d+\s+(.*)', line)
-            if m:
-                sid = int(m.group(1))
-                remainder = m.group(2).strip()
-                parts = remainder.split()
-                name_parts = []
-                for part in parts:
-                    if ":" in part and "." in part: break 
-                    name_parts.append(part)
-                
-                full_name = " ".join(name_parts)
-                clean_name = re.sub(r'\^\d', '', full_name).strip()
-                
-                if clean_name:
-                    p = next((x for x in self.players if x.name == clean_name), None)
-                    if p:
-                        if p.id != sid:
-                            print(f"[*] Updating {p.name} SID: {p.id} -> {sid}")
-                            p.id = sid
-                    else:
-                        self.sync_player(sid, clean_name)
+        active_sids = []
 
-        active_sids = [int(re.search(r'^\s*(\d+)', line).group(1)) for line in lines if re.search(r'^\s*(\d+)', line)]
-        
-        for p_mem in self.players[:]:
-            is_spec = any(f"{p_mem.id} " in line and ("(spec)" in line.lower() or "spectator" in line.lower()) for line in lines)
+        for line in lines:
+            # This Regex finds:
+            # 1. The SID (starts with a digit)
+            # 2. Skips Score and Ping
+            # 3. Captures EVERYTHING until it sees something that looks like an IP (x.x.x.x:port)
+            match = re.search(r'^\s*(\d+)\s+-?\d+\s+\d+\s+(.*?)\s+\d+\s+\d{1,3}\.\d', line)
             
-            if p_mem.id not in active_sids or is_spec:
-                if p_mem.bounty > 0:
-                    refund_amt = p_mem.bounty
-                    p_mem.credits += refund_amt
-                    p_mem.bounty = 0
-                    print(f"[*] Refunding {refund_amt}cr to {p_mem.name} (Left or Spectator)")
+            if match:
+                try:
+                    sid = int(match.group(1))
+                    raw_name = match.group(2).strip()
                     
-                    if not is_spec:
-                        self.players.remove(p_mem)
+                    # Cleanup MBII trailing ^7 artifact
+                    if raw_name.endswith("^7"):
+                        raw_name = raw_name[:-2].strip()
                     
-                    self.save_db()      
+                    active_sids.append(sid)
+                    norm_name = normalize(raw_name)
+
+                    # Find or Create using the SQLite-safe method
+                    p = next((x for x in self.players if normalize(x.name) == norm_name), None)
+                    if p:
+                        p.id = sid
+                    else:
+                        # This now hits the SQL database instead of a JSON list
+                        self.sync_player(sid, raw_name)
+                        
+                except Exception as e:
+                    print(f"[!] Error parsing ASCII name: {e}")
+
+        # --- Cleanup Logic (Same as your provided code) ---
+        for p_mem in self.players[:]:
+            # Check if they are actually in the status response
+            still_here = any(line.strip().startswith(f"{p_mem.id} ") for line in lines)
+            
+            if not still_here:
+                # Handle bounty refunds/cleanup
+                total_bounty = sum(p_mem.bounty.values()) if hasattr(p_mem, 'bounty') and isinstance(p_mem.bounty, dict) else 0
+                if total_bounty > 0:
+                    print(f"[*] Clearing {total_bounty}cr bounty from {p_mem.name} (Left)")
+                    p_mem.bounty = {}
+                
+                self.players.remove(p_mem)
+        
+        # In SQLite mode, we don't need self.save_db() here because sync_player saves individually!     
 
     def check_rank_change(self, player, old_level):
         new_level = player.level
@@ -294,32 +279,31 @@ class MBIIChaosPlugin:
             k_id, v_id, w_id = int(k_id), int(v_id), int(w_id)
         except: return
 
-        # 1. UNIVERSAL SYNC: Capture names for ANY weapon/MOD in Open or FA
-        # This regex grabs everything between 'Kill:' and 'killed', and 'killed' and 'by'
+        # 1. Capture names using the IP-anchor regex
         m = re.search(r'Kill:\s*\d+\s+\d+\s+\d+:\s*(.*?)\s+killed\s+(.*?)\s+by', raw_line)
         k_name_log = m.group(1).strip() if m else None
         v_name_log = m.group(2).strip() if m else None
 
+        # Resolve IP artifacts
         if k_name_log and ("." in k_name_log or ":" in k_name_log):
             p_k = next((x for x in self.players if x.id == k_id), None)
             k_name_log = p_k.name if p_k else k_name_log
-
         if v_name_log and ("." in v_name_log or ":" in v_name_log):
             p_v = next((x for x in self.players if x.id == v_id), None)
             v_name_log = p_v.name if p_v else v_name_log
 
-        # Instantly register players found in the log line if they aren't in our list
+        # Sync with SQLite Database
         killer = self.sync_player(k_id, k_name_log) if k_name_log and k_id != 1022 else next((x for x in self.players if x.id == k_id), None)
         victim = self.sync_player(v_id, v_name_log) if v_name_log else next((x for x in self.players if x.id == v_id), None)
 
         if victim:
-            # Ignore Spectator, Team Swaps, and Suicides (Identified by matching IDs or specific MODs)
+            # Ignore Suicides/World Kills/Team Swaps
             if k_id == v_id or w_id in [97, 100]: return
 
             old_lvl_v = victim.level
-            loss = int(self.settings['xp_loss'])
+            loss = int(self.settings.get('xp_loss', 10))
             
-            # Last Stand Protection
+            # XP Loss Logic
             if victim.xp >= loss:
                 victim.xp -= loss
                 loss_str = f"^1(-{loss} XP)"
@@ -329,48 +313,52 @@ class MBIIChaosPlugin:
             
             victim.deaths += 1
             victim.streak = 0
-            self.check_rank_change(victim, old_lvl_v)
+            self.save_player_stat(victim) # Update DB immediately
 
-            # 2. AGNOSTIC KILL LOGIC: Rewardable player kill
+            # Reward Killer
             if k_id != 1022 and killer and killer.id != victim.id:
                 old_lvl_k = killer.level
-                xp_gain = int(self.settings['xp_per_kill'])
+                xp_gain = int(self.settings.get('xp_per_kill', 50))
                 cred_gain = int(self.settings.get('passive_credit_gain', 10))
                 
-                # Force Surge (5% chance for 3x XP)
+                # Force Surge (Random Bonus)
                 mult = 3 if random.random() < 0.05 else 1
                 if mult > 1: self.send_rcon(f'say "^3FORCE SURGE: ^7{killer.name} tapped into the Force for ^23x XP^7!"')
                 
                 killer.xp += (xp_gain * mult)
                 
                 # --- Payout Logic ---
-                b_reward = victim.bounty
-                bet_reward = self.active_bets.pop(killer.id, 0) # Killer wins their bet pot
-                self.active_bets.pop(victim.id, None)          # Victim loses their bet pot
+                b_reward = 0
+                if isinstance(victim.bounty, dict) and victim.bounty:
+                    b_reward = sum(victim.bounty.values())
+                    victim.bounty = {} # Claimed
+                
+                bet_reward = 0
+                if killer.id in self.active_bets:
+                    bet_data = self.active_bets.pop(killer.id)
+                    bet_reward = (sum(bet_data.values()) if isinstance(bet_data, dict) else int(bet_data)) * 2
+                
+                if victim.id in self.active_bets:
+                    self.active_bets.pop(victim.id) # Victim lost their bet
                 
                 killer.credits += (cred_gain + b_reward + bet_reward)
-                victim.bounty = {}  # Bounty is collected
-
-                killer.kills += 1; killer.streak += 1
+                killer.kills += 1
+                killer.streak += 1
                 
                 # Nemesis System
                 killer.nemesis_map[victim.name] = killer.nemesis_map.get(victim.name, 0) + 1
                 if killer.nemesis_map[victim.name] == 3:
                     self.send_rcon(f'say "^1NEMESIS: ^7{killer.name} is dominating {victim.name}!"')
 
-                payout_str = ""
-                if b_reward > 0 and bet_reward > 0:
-                    payout_str = f" & secured ^3{b_reward}cr Bounty ^7+ ^2{bet_reward}cr Bet Payout^7"
-                elif b_reward > 0:
-                    payout_str = f" & collected a ^3{b_reward}cr Bounty^7"
-                elif bet_reward > 0:
-                    payout_str = f" & pocketed ^2{bet_reward}cr in Winnings^7"
-
+                # Announcement
+                payout_str = f" & secured ^3{b_reward + bet_reward}cr^7" if (b_reward + bet_reward) > 0 else ""
                 k_title = killer.get_title(self.current_server_mode)
                 v_title = victim.get_title(self.current_server_mode)
-
+                
                 self.send_rcon(f'say "{k_title} ^2{killer.name} ^7defeated {v_title} ^1{victim.name} ^3(+{xp_gain * mult} XP){payout_str} {loss_str}"')
+                
                 self.check_rank_change(killer, old_lvl_k)
+                self.save_player_stat(killer) # Update DB immediately
 
     def play_pazaak(self, p, amount):
         if p.credits < amount:
@@ -387,38 +375,31 @@ class MBIIChaosPlugin:
         
         self.send_rcon(f'svtell {p.id} "^5[PAZAAK] ^7Bet: ^3{amount}cr ^7| Dealer Bonus: ^2{self.dealer_credits}cr"')
         self.send_rcon(f'svtell {p.id} "^7Your Hand: ^2{card} ^7| !hit or !stand?"')
-        self.save_db()
+        self.save_player_stat(p)
 
     def handle_chat(self, sid, name, msg):
-        clean_name = re.sub(r'\^\d', '', name).strip().lower()
-        msg = msg.lower().strip()
+        clean_log_name = normalize(name) #
+        msg = msg.lower().strip() #
         
-        if not msg.startswith("!"):
+        if not msg.startswith("!"): #
             return
 
-        # RESOLVE PLAYER: Try SID first (most reliable), then Name
-        p = None
-        # Only use the ID if it's a real slot (0-31) and not a timestamp fragment
-        if sid != -1 and sid < 64:
-            p = next((x for x in self.players if x.id == sid), None)
+        # Attempt 1: Check memory for ID or Name
+        p = next((x for x in self.players if x.id == sid or normalize(x.name) == clean_log_name), None)
         
-        if not p:
-            p = next((x for x in self.players if (clean_name in x.name.lower()) or 
-                      (x.name.lower() in clean_name)), None)
-
+        # Attempt 2: Force a server scan if not found
         if not p:
             self.sync_current_players()
-            p = next((x for x in self.players if (clean_name in x.name.lower())), None)
+            p = next((x for x in self.players if x.id == sid or normalize(x.name) == clean_log_name), None)
 
         if not p:
-            return 
+            print(f"[!] Critical: Could not resolve player '{clean_log_name}'") #
+            return
 
-        # Update the player object with the correct Slot ID from the log
-        if sid != -1 and sid < 64:
-            p.id = sid
-            
-        target_sid = p.id
-        # print(f"[DEBUG] {p.name} (Slot {target_sid}) used {msg}")
+        # Safety update for SIDs
+        if sid != -1:
+            p.id = sid #
+        target_sid = p.id #    
             
         msg = msg.lower().strip()
 
@@ -469,9 +450,9 @@ class MBIIChaosPlugin:
                     return 
 
                 p.faction = target_faction
-                self.save_db()
+                self.save_player_stat(p)
                 title_display = p.get_title(self.current_server_mode)
-                self.send_rcon(f'say "^7{p.name} has chosen the career: {title_display}^7!"')
+                self.send_rcon(f'say "^7{p.name} ^7has chosen the career: {title_display}^7!"')
             else:
                 self.send_rcon(f'svtell {target_sid} "^1Error: ^7Career \'{choice}\' not found."')
                 self.send_rcon(f'svtell {target_sid} "^5Hero: ^7{hero_list}"')
@@ -511,7 +492,7 @@ class MBIIChaosPlugin:
                 del self.active_pazaak[p.name]
             else:
                 self.send_rcon(f'say "^5[PAZAAK] ^7{p.name} ^7draws {card}. ^7Total: ^2{game["score"]}"')
-            self.save_db()
+            self.save_player_stat(p)
         elif msg == "!stand" and p.name in self.active_pazaak:
             game = self.active_pazaak[p.name]
             diff = int(self.settings.get('pazaak_difficulty', 17))
@@ -535,31 +516,33 @@ class MBIIChaosPlugin:
                 self.send_rcon(f'say "^1LOSS! ^7The House wins. Dealer Pot is now ^3{self.dealer_credits}cr^7."')
             
             del self.active_pazaak[p.name]
-            self.save_db()     
+            self.save_player_stat(p)     
         elif msg == "!rank": 
             display_title = p.get_title(self.current_server_mode)
             self.send_rcon(f'svtell {target_sid} "^7{p.name}: {display_title} ^7| Lvl: ^2{p.level} ^7| XP: ^2{p.xp}"')
         elif msg == "!stats": 
             self.send_rcon(f'svtell {target_sid} "^7STATS: {p.name} ^2Kills: {p.kills} ^1Deaths: {p.deaths}"')
         elif msg == "!wealth":
-            for p_online in self.players:
-                entry = next((item for item in self.db if item["name"] == p_online.name), None)
-                if entry:
-                    entry["credits"] = p_online.credits
-
-            sorted_wealth = sorted(self.db, key=lambda x: x.get('credits', 0), reverse=True)
-            
-            txt = "^3Wealthy 5: " + " ".join([f"^2{i+1}.^5{x['name']}(^3{x.get('credits',0)}cr^2)" for i,x in enumerate(sorted_wealth[:5])])
-            self.send_rcon(f'say "{txt}"')
+            with sqlite3.connect(self.db_filename, timeout=20) as conn:
+                cursor = conn.cursor()
+                # Fetch the top 5 directly from the database
+                cursor.execute("SELECT name, credits FROM players ORDER BY credits DESC LIMIT 5")
+                rows = cursor.fetchall()
+                txt = "^3Wealthy 5: " + " ".join([f"^5{r[0]}(^3{r[1]}cr^7)" for r in rows])
+                self.send_rcon(f'say "{txt}"')
         elif msg == "!bank" or msg == "!wallet" or msg == "!credits":
-            b_msg = f" ^1(Bounty: {p.bounty})" if p.bounty > 0 else ""
+            # Sum up the total value of all bounty contributions
+            total_bounty = sum(p.bounty.values()) if isinstance(p.bounty, dict) else 0
+            b_msg = f" ^1(Bounty: {total_bounty})" if total_bounty > 0 else ""
             self.send_rcon(f'svtell {target_sid} "^5[BANK] ^2{p.name}^7, you have ^3{p.credits} Credits^7.{b_msg}"')
         elif msg == "!bounties":
-            active_bounties = [p for p in self.players if p.bounty > 0]
+            active_bounties = [pl for pl in self.players if isinstance(pl.bounty, dict) and sum(pl.bounty.values()) > 0]
+        
             if not active_bounties:
                 self.send_rcon(f'say "^5[BANK] ^7There are currently no active ^1BOUNTIES^7."')
             else:
-                txt = "^1Active Bounties: " + " ".join([f"^5{p.name}(^1{p.bounty}^7)" for p in active_bounties])
+                # Display the sum of contributions for each player
+                txt = "^1Active Bounties: " + " ".join([f"^5{pl.name}(^1{sum(pl.bounty.values())}^7)" for pl in active_bounties])
                 self.send_rcon(f'say "{txt}"')       
         elif msg.startswith("!bounty"):
             parts = msg.split(" ")
@@ -573,7 +556,7 @@ class MBIIChaosPlugin:
                         p.credits += refund
                         self.send_rcon(f'say "^5[BANK] ^7{p.name} cancelled their bounty on {target.name}. ^2{refund}cr ^7refunded."')
                         found_bounty = True
-                        self.save_db()
+                        self.save_player_stat(p)
                         break 
                 
                 if not found_bounty:
@@ -598,7 +581,7 @@ class MBIIChaosPlugin:
                     
                     total = sum(target.bounty.values())
                     self.send_rcon(f'say "^1WAGER: ^7{p.name} put a ^3{amount}cr ^7bounty on {target.name}! Total: ^1{total}cr^7!"')
-                    self.save_db()
+                    self.save_player_stat(p)
                 elif not target:
                     self.send_rcon(f'svtell {target_sid} "^1Error: ^7Player \'{parts[1]}\' not found."')
             except ValueError:
@@ -612,8 +595,6 @@ class MBIIChaosPlugin:
                 
                 target_name = parts[1].lower()
                 amt = int(parts[2])
-
-                # Search for target player by name instead of ID
                 target = next((x for x in self.players if target_name in x.name.lower()), None)
 
                 if not target:
@@ -622,14 +603,20 @@ class MBIIChaosPlugin:
 
                 if p.credits >= amt and amt > 0:
                     p.credits -= amt
-                    # We still use target.id internally to track the bet for the Kill processor
-                    self.active_bets[target.id] = self.active_bets.get(target.id, 0) + (amt * 2)
+                    
+                    # Track bets using a nested dictionary: {target_id: {player_name: amount}}
+                    if target.id not in self.active_bets:
+                        self.active_bets[target.id] = {}
+                    
+                    # Store the original bet amount (we calculate the 2x payout later)
+                    self.active_bets[target.id][p.name] = self.active_bets[target.id].get(p.name, 0) + amt
+                    
                     self.send_rcon(f'say "^2BET: ^5{p.name} ^7bet ^3{amt}cr ^7on ^5{target.name}^7!"')
-                    self.save_db()
+                    self.save_player_stat(p)
                 else:
                     self.send_rcon(f'svtell {target_sid} "^1Error: ^7Insufficient credits."')
-            except: 
-                self.send_rcon(f'svtell {target_sid} "^7Usage: !bet <name> <amount>"')
+            except ValueError:
+                self.send_rcon(f'svtell {target_sid} "^1Error: ^7Amount must be a number."')
         elif msg.startswith("!pay"):
             try:
                 parts = msg.split(" ")
@@ -655,15 +642,19 @@ class MBIIChaosPlugin:
                     p.credits -= amount
                     target.credits += amount
                     self.send_rcon(f'say "^2TRANSFER: ^7{p.name} sent ^3{amount} Credits ^7to {target.name}!"')
-                    self.save_db()
+                    self.save_player_stat(p)
                 else:
                     self.send_rcon(f'svtell {target_sid} "^1Error: ^7Insufficient credits."')
             except:
                 self.send_rcon(f'svtell {target_sid} "^7Usage: !pay <name> <amount>"')  
         elif msg == "!top":
-            sorted_db = sorted(self.db, key=lambda x: x.get('xp', 0), reverse=True)
-            xpl = int(self.settings['xp_per_level'])
-            txt = "^5Top 5: " + " ".join([f"^7{i+1}.{x['name']}(^2Lvl {(x.get('xp',0)//xpl)+1}^7)" for i,x in enumerate(sorted_db[:5])])
+            with sqlite3.connect(self.db_filename, timeout=20) as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT name, xp FROM players ORDER BY xp DESC LIMIT 5")
+                rows = cursor.fetchall()
+
+            xpl = int(self.settings.get('xp_per_level', 1000))
+            txt = "^5Top 5: " + " ".join([f"^7{r[0]}(^2Lvl {(r[1]//xpl)+1}^7)" for r in rows])
             self.send_rcon(f'say "{txt}"')
         elif msg == "!level":
             title = p.get_title(self.current_server_mode)
@@ -720,36 +711,50 @@ class MBIIChaosPlugin:
                                 # Only keeps the player data synced; no chat announcement sent
                                 self.sync_player(sid, name)
                         if "ClientDisconnect:" in line or "entered the game" in line:
-                            # 1. Identify who left/specced
                             m = re.search(r'(ClientDisconnect:|entered the game:)\s*(\d+)', line)
                             if m:
-                                target_sid = int(m.group(2))
-                                target_p = next((x for x in self.players if x.id == target_sid), None)
+                                t_sid = int(m.group(2))
+                                t_p = next((x for x in self.players if x.id == t_sid), None)
                                 
-                                # 2. If they had a bounty, refund all contributors immediately
-                                if target_p and isinstance(target_p.bounty, dict) and target_p.bounty:
-                                    for contributor_name, amount in target_p.bounty.items():
-                                        # Find the contributor to give credits back
-                                        contributor = next((x for x in self.players if x.name == contributor_name), None)
-                                        if contributor:
-                                            contributor.credits += amount
-                                            self.send_rcon(f'svtell {contributor.id} "^5[BANK] ^7Target left/specced. ^2{amount}cr ^7bounty refunded."')
-                                    
-                                    target_p.bounty = {} # Clear the bounty
-                                    self.save_db()        
+                                if t_p:
+                                    # Refund Bounties
+                                    if isinstance(t_p.bounty, dict):
+                                        for name, amt in t_p.bounty.items():
+                                            contributor = next((x for x in self.players if x.name == name), None)
+                                            if contributor:
+                                                contributor.credits += amt
+                                                self.save_player_stat(contributor) # Save the person getting the money back
+                                        t_p.bounty = {}
+
+                                    # Refund Bets
+                                    if t_sid in self.active_bets:
+                                        bet_dict = self.active_bets.pop(t_sid)
+                                        for name, amt in bet_dict.items():
+                                            contributor = next((x for x in self.players if x.name == name), None)
+                                            if contributor:
+                                                contributor.credits += amt
+                                                self.save_player_stat(contributor) # Save the person getting the money back
+                                        
+                                    self.send_rcon(f'say "^5[BANK] ^7Bets/Bounties on ^5{t_p.name} ^7refunded (Left/Spec)."')
+                                    self.save_player_stat(t_p)        
                         elif "Kill: " in line:
                             m = re.search(r'Kill:\s*(\d+)\s+(\d+)\s+(\d+):', line)
                             if m:
                                 self.process_kill(m.group(1), m.group(2), m.group(3), line)
                         elif " say: " in line:
-                            # Strict Regex: Matches a space, then 1-2 digits, then ': say:'
-                            # This prevents grabbing the timestamp (like 11:15)
+                            # Strict Regex
                             sid_match = re.search(r'\s(\d{1,2}):\s+say:', line)
                             log_sid = int(sid_match.group(1)) if sid_match else -1
+                            
+                            # --- DEBUG LOG PARSING ---
+                            #if "!" in line:
+                            #    print(f"[DEBUG] Log Line Detected: {line}")
+                            #    print(f"[DEBUG] Extracted SID: {log_sid}")
                             
                             m_chat = re.search(r'say:\s*(.*?):\s*"(.*)"', line)
                             if m_chat:
                                 name_raw = m_chat.group(1).strip()
+                                # Strip color codes for internal logic
                                 name_clean = re.sub(r'\^\d', '', name_raw).strip()
                                 message = m_chat.group(2).strip().replace('"', '')
                                 self.handle_chat(log_sid, name_clean, message)
