@@ -379,6 +379,25 @@ class MBIIChaosPlugin:
                 killer.credits += stolen
                 bonus_str += f" ^1[STOLE {stolen}cr]"
 
+            # --- PROGRESSIVE BANK HEIST ---
+            # 1. Every kill adds a small "tax" to the House Vault
+            self.dealer_credits += 5 
+
+            # 2. Roll for the Heist (1% chance)
+            if random.random() < 0.01 and self.dealer_credits > 100:
+                # Calculate payout (20% of current vault)
+                heist = int(self.dealer_credits * 0.20)
+                
+                # Check for "MEGA JACKPOT" (If vault is huge, take 50% instead!)
+                if self.dealer_credits > 5000:
+                    heist = int(self.dealer_credits * 0.50)
+                    self.send_rcon(f'say "^1MEGA HEIST: ^7{killer.name} cleaned out the Vault for ^2{heist}cr^7!"')
+                else:
+                    self.send_rcon(f'say "^3HEIST: ^7{killer.name} cracked the House Vault for ^2{heist}cr^7!"')
+
+                self.dealer_credits -= heist
+                killer.credits += heist    
+
             # --- Stats Update ---
             killer.kills += 1
             killer.streak += 1
@@ -520,7 +539,7 @@ class MBIIChaosPlugin:
         elif msg == "!help" or msg == "!commands":        
             self.send_rcon(f'svtell {p.id} "^5--- CHAOS COMMANDS ---"')
             self.send_rcon(f'svtell {p.id} "^3Personal: ^7!rank, !stats, !bank, !title !level"')
-            self.send_rcon(f'svtell {p.id} "^3Economy: ^7!pay <name> <amt>, !wealth, !top"')
+            self.send_rcon(f'svtell {p.id} "^3Economy: ^7!pay <name> <amt>, !wealth, !top" !vault !house')
             self.send_rcon(f'svtell {p.id} "^3Gambling: ^7!pazaak <amt>, !bet <name> <amt>, !bounty <name> <amt>"')
             self.send_rcon(f'svtell {p.id} "^2Pazaak Info: ^7Hit 20 for 3x Payout!"')
         # Check for the command without a space first, or the command with a space
@@ -718,9 +737,10 @@ class MBIIChaosPlugin:
         elif msg == "!level":
             title = p.get_title(self.current_server_mode)
             progress = p.get_progress_bar()
-            
-            # ADD THE 'f' HERE:
-            self.send_rcon(f'svtell {p.id} "{title} ^7{p.name} ^7- Lvl ^2{p.level} ^7| {progress}"')              
+            self.send_rcon(f'svtell {p.id} "{title} ^7{p.name} ^7- Lvl ^2{p.level} ^7| {progress}"')
+        elif msg == "!vault" or msg == "!house":
+            # Show the current progressive jackpot
+            self.send_rcon(f'svtell {p.id} "^5[HOUSE] ^7Current Vault: ^3{self.dealer_credits} Credits ^7(1% chance to heist on kill)"')                  
 
     def run(self):
         log = self.settings['logname']
