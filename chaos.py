@@ -156,18 +156,21 @@ class MBIIChaosPlugin:
             cursor = conn.cursor()
             
             # --- THE IP-ONLY LOOKUP ---
-            # We don't care if the name is Padawan, Padawan[1], or Valzhar.
-            # If the IP matches, it's the same human.
             cursor.execute("SELECT clean_name, xp, kills, deaths, faction, credits FROM players WHERE last_ip = ?", (ip,))
             data = cursor.fetchone()
             
             if data:
-                # Found existing user by IP
+                # Found existing user by IP!
                 db_clean, xp, kills, deaths, faction, credits = data
                 
-                # Update their name in the DB just so !top shows their current choice
-                cursor.execute("UPDATE players SET name = ?, clean_name = ? WHERE last_ip = ?", (display_name, clean, ip))
-                conn.commit()
+                # --- THE FIX ---
+                # ONLY update the display name. 
+                # Removing 'clean_name = ?' here stops the UNIQUE constraint errors.
+                try:
+                    cursor.execute("UPDATE players SET name = ? WHERE last_ip = ?", (display_name, ip))
+                    conn.commit()
+                except sqlite3.Error as e:
+                    print(f"[!] Update Error: {e}")
             else:
                 # Truly a new IP (New Player)
                 try:
@@ -175,8 +178,7 @@ class MBIIChaosPlugin:
                                    (display_name, clean, ip, xp, kills, deaths, faction, credits))
                     conn.commit()
                 except sqlite3.IntegrityError:
-                    # If this name is already taken by ANOTHER IP, we let it slide 
-                    # by giving this new IP its own entry with a slightly unique clean_name
+                    # If this name is already taken by ANOTHER IP, give them a unique ID
                     unique_clean = f"{clean}_{int(time.time())}"
                     cursor.execute("INSERT INTO players (name, clean_name, last_ip, xp, kills, deaths, faction, credits) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                                    (display_name, unique_clean, ip, xp, kills, deaths, faction, credits))
@@ -185,6 +187,7 @@ class MBIIChaosPlugin:
         # Update Memory: Remove the old slot data to make room for the fresh sync
         self.players = [p for p in self.players if p.id != sid]
         
+        # Note: We use the existing 'xp' and 'credits' found in the DB
         p = Player(sid, display_name, xp, kills, deaths, faction, credits, self.settings)
         p.raw_name = raw_name
         p.ip = ip 
