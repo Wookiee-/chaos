@@ -34,6 +34,14 @@ The `chaos.py` script is a comprehensive RPG-style server management system for 
 * **Multi-Port Ready**: Uses `timeout=20` and `conn.commit()` logic to allow multiple server instances (different ports) to read and write to the same database file without corruption or locking issues.
 * **Robust Regex Parsing**: Captures Slot ID, Name, and IP simultaneously to ensure the script always knows exactly who is on the server at any given second.
 
+
+### 6. Anti-Grief & Team Protection)
+
+* **Live Team Tracking**: The script parses the `status` command to monitor team assignments (Rebel vs. Imperial) in real-time across all game modes.
+* **Traitor Penalty**: Automatically detects Team Kills. Instead of rewards, the killer is slapped with a -500 XP and -1000cr penalty, their kill streak is reset, and a global "TRAITOR" announcement is broadcast.
+* **Suicide/World Filtering**: Sophisticated filtering ignores world deaths (fall damage, map hazards) and suicides to prevent accidental XP loss or reward triggers.
+* **Anti-Farming Logic**: By validating team IDs before processing rewards, the script prevents players from killing friends on the same team to "farm" XP or credits.
+
 ---
 
 ## 🛠️Game Commands

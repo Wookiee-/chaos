@@ -233,17 +233,27 @@ class MBIIChaosPlugin:
         active_sids = []
 
         for line in lines:
-            # Captures Group 1: SID | Group 2: Name | Group 3: IP
-            match = re.search(r'^\s*(\d+)\s+-?\d+\s+\d+\s+(.*?)\s+\d+\s+(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})', line)
+            # Group 1: SID | Group 2: Name | Group 3: IP | Group 4: Team
+            # Added \s+(\d)$ to the end to catch the team digit
+            match = re.search(r'^\s*(\d+)\s+-?\d+\s+\d+\s+(.*?)\s+\d+\s+(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}).*?\s+(\d)$', line)
             
             if match:
                 try:
                     sid = int(match.group(1))
                     raw_name = match.group(2).strip()
-                    ip = match.group(3) # Captured IP
+                    ip = match.group(3)
+                    team_id = int(match.group(4)) # New: 1=Rebel, 2=Imp
                     
                     if raw_name.endswith("^7"):
                         raw_name = raw_name[:-2].strip()
+                    
+                    active_sids.append(sid)
+                    
+                    p = next((x for x in self.players if x.id == sid), None)
+                    if not p:
+                        p = self.sync_player(sid, raw_name, ip)
+                    
+                    p.team = team_id # Store the current team
                     
                     active_sids.append(sid)
                     norm_name = normalize(raw_name)
@@ -302,6 +312,22 @@ class MBIIChaosPlugin:
         # Sync with SQLite Database
         killer = self.sync_player(k_id, k_name_log) if k_name_log and k_id != 1022 else next((x for x in self.players if x.id == k_id), None)
         victim = self.sync_player(v_id, v_name_log) if v_name_log else next((x for x in self.players if x.id == v_id), None)
+
+        # --- TEAM KILL PROTECTION ---
+        if killer and victim and k_id != v_id:
+            # Ensure both have team data and aren't spectators (0)
+            k_team = getattr(killer, 'team', -1)
+            v_team = getattr(victim, 'team', -2)
+
+            if k_team == v_team and k_team != 0:
+                tk_penalty = 500
+                killer.xp = max(0, killer.xp - tk_penalty)
+                killer.credits = max(0, killer.credits - 1000)
+                killer.streak = 0
+                
+                self.send_rcon(f'say "^1TRAITOR: ^7{killer.name} killed a teammate! Lost ^1{tk_penalty} XP^7!"')
+                self.save_player_stat(killer)
+                return # STOP HERE: Do not give rewards
 
         if victim:
             # Ignore Suicides/World Kills/Team Swaps
