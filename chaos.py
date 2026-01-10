@@ -146,47 +146,57 @@ class MBIIChaosPlugin:
 
     def sync_player(self, sid, raw_name, ip="0.0.0.0"):
         clean = normalize(raw_name)
-        
-        # NEW: Create a friendly display name for memory and UI
-        # This strips color codes like ^7 and brackets []
         display_name = re.sub(r'\^.', '', raw_name).replace('[', '').replace(']', '').strip()
+        
+        # Default stats for new players
+        xp, kills, deaths, faction, credits = 0, 0, 0, "jedi", 100
         
         with sqlite3.connect(self.db_filename, timeout=20) as conn:
             cursor = conn.cursor()
             
-            # 1. Try to find by name first using the normalized 'clean' name
+            # 1. Try to find by clean_name first
             cursor.execute("SELECT xp, kills, deaths, faction, credits, last_ip FROM players WHERE clean_name = ?", (clean,))
             data = cursor.fetchone()
             
             if data:
                 xp, kills, deaths, faction, credits, last_ip = data
-                # Keep IP address fresh in the database
-                if ip != last_ip:
-                    cursor.execute("UPDATE players SET last_ip = ? WHERE clean_name = ?", (ip, clean))
-                    conn.commit()
+                cursor.execute("UPDATE players SET name = ?, last_ip = ? WHERE clean_name = ?", (display_name, ip, clean))
+                conn.commit()
             else:
-                # 2. NAME MISSED: Check if this IP is already in our database
-                cursor.execute("SELECT name, xp, kills, deaths, faction, credits FROM players WHERE last_ip = ?", (ip,))
+                # 2. Check if IP exists
+                cursor.execute("SELECT clean_name, xp, kills, deaths, faction, credits FROM players WHERE last_ip = ?", (ip,))
                 alt_data = cursor.fetchone()
                 
                 if alt_data:
-                    old_name, xp, kills, deaths, faction, credits = alt_data
-                    # IP MATCH: Update the existing record with the new name
-                    cursor.execute("UPDATE players SET name = ?, clean_name = ? WHERE last_ip = ?", (display_name, clean, ip))
-                    conn.commit()
+                    old_clean_name, xp, kills, deaths, faction, credits = alt_data
+                    try:
+                        cursor.execute("UPDATE players SET name = ?, clean_name = ? WHERE last_ip = ?", (display_name, clean, ip))
+                        conn.commit()
+                    except sqlite3.IntegrityError:
+                        # FALLBACK: If name taken, re-fetch that specific name
+                        cursor.execute("SELECT xp, kills, deaths, faction, credits FROM players WHERE clean_name = ?", (clean,))
+                        fallback = cursor.fetchone()
+                        if fallback:
+                            xp, kills, deaths, faction, credits = fallback
                 else:
-                    # 3. TRULY NEW: No name match and no IP match
-                    xp, kills, deaths, faction, credits = 0, 0, 0, "jedi", 100
-                    cursor.execute("INSERT INTO players (name, clean_name, last_ip, xp, kills, deaths, faction, credits) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                                   (display_name, clean, ip, xp, kills, deaths, faction, credits))
-                    conn.commit()
+                    # 3. Truly new player
+                    try:
+                        cursor.execute("INSERT INTO players (name, clean_name, last_ip, xp, kills, deaths, faction, credits) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                                       (display_name, clean, ip, xp, kills, deaths, faction, credits))
+                        conn.commit()
+                    except sqlite3.IntegrityError:
+                        # If insert fails, last ditch effort to get stats
+                        cursor.execute("SELECT xp, kills, deaths, faction, credits FROM players WHERE clean_name = ?", (clean,))
+                        fallback = cursor.fetchone()
+                        if fallback:
+                            xp, kills, deaths, faction, credits = fallback
+
+        # Cleanup memory
+        self.players = [p for p in self.players if p.id != sid and normalize(p.name) != clean]
         
-        # Remove duplicates from memory and create the player object with the clean display_name
-        self.players = [p for p in self.players if normalize(p.name) != clean]
-        
-        # Use display_name so !top, !wealth, and !rank look professional
+        # Create object
         p = Player(sid, display_name, xp, kills, deaths, faction, credits, self.settings)
-        p.raw_name = raw_name # Store the original color-coded name if you ever need it for specific RCON commands
+        p.raw_name = raw_name
         p.ip = ip 
         self.players.append(p)
         return p
@@ -313,21 +323,25 @@ class MBIIChaosPlugin:
         killer = self.sync_player(k_id, k_name_log) if k_name_log and k_id != 1022 else next((x for x in self.players if x.id == k_id), None)
         victim = self.sync_player(v_id, v_name_log) if v_name_log else next((x for x in self.players if x.id == v_id), None)
 
-        # --- TEAM KILL PROTECTION ---
+        # --- UPDATED TEAM KILL PROTECTION ---
         if killer and victim and k_id != v_id:
-            # Ensure both have team data and aren't spectators (0)
             k_team = getattr(killer, 'team', -1)
             v_team = getattr(victim, 'team', -2)
 
-            if k_team == v_team and k_team != 0:
-                tk_penalty = 500
-                killer.xp = max(0, killer.xp - tk_penalty)
-                killer.credits = max(0, killer.credits - 1000)
-                killer.streak = 0
-                
-                self.send_rcon(f'say "^1TRAITOR: ^7{killer.name} killed a teammate! Lost ^1{tk_penalty} XP^7!"')
-                self.save_player_stat(killer)
-                return # STOP HERE: Do not give rewards
+            # ONLY apply TK penalty if it's NOT Duel Mode (3)
+            if self.current_server_mode != 3:
+                if k_team == v_team and k_team != 0:
+                    tk_penalty = 500
+                    killer.xp = max(0, killer.xp - tk_penalty)
+                    killer.credits = max(0, killer.credits - 1000)
+                    killer.streak = 0
+                    
+                    self.send_rcon(f'say "^1TRAITOR: ^7{killer.name} killed a teammate! Lost ^1{tk_penalty} XP^7!"')
+                    self.save_player_stat(killer)
+                    return # Penalty applied, stop processing
+            else:
+                # In Mode 3, we just pass through to the rewards below
+                pass
 
         if victim:
             # Ignore Suicides/World Kills/Team Swaps
