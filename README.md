@@ -5,8 +5,10 @@ The `chaos.py` script is a comprehensive RPG-style server management system for 
 
 ### 1. The Core Progression System
 * **20-Tier Career Paths**: There are 14 distinct career paths (7 Hero, 7 Villain), each containing 20 unique titles that evolve every 2.5 levels.
-* **Leveling & XP**: Players earn XP through kills and lose a configurable amount upon death[cite: 1, 2]. "Last Stand Protection" prevents XP from dropping below zero.
+* **Leveling & XP**: Players earn XP through kills and lose a configurable amount upon death. 
+* **"Protection"** prevents XP from dropping below zero.
 * **Dynamic Title Logic**: The `get_title` system automatically assigns colors (Cyan for Heroes, Red for Villains) and ranks based on the player's chosen faction and current level.
+* **JKA-Optimized UI**: Employs a specialized `/100` fraction display for the `!level` command to bypass the Quake 3 engine's percentage-sign (%) filter, ensuring 100% visibility in the game console.
 
 ### 2. "Smart Switch" Mode Awareness
 * **Duel Mode Restriction (Mode 3)**: Automatically detects `g_authenticity` setting and restricts all players to "Jedi" or "Sith" titles, regardless of their chosen career.
@@ -21,11 +23,12 @@ The `chaos.py` script is a comprehensive RPG-style server management system for 
 
 ### 4. Advanced Combat Logic
 
-* **Killing Spree System**: Tracks consecutive kills without dying. Triggers global server announcements at 5 (Killing Spree), 10 (Unstoppable), and 15 (Godlike) kills.
+* **Killing Spree System**: Tracks consecutive kills without dying, with global server announcements.
 * **Nemesis & Revenge**: Tracks "dominance" (3+ kills in a row). Breaking a Nemesis cycle grants a +200cr Revenge Bonus and resets the feud.
 * **Force Surge**: A 5% chance on any kill to trigger a surge, granting 3x XP.
 * **Wealth Redistribution (Theft)**: Killing a "Wealthy" player (over 5,000cr) automatically steals 5% of their credits for the killer.
-* **Bank Heist**: A rare 1% chance to "crack the House Vault," stealing 20% of the Pazaak Dealer's credits.
+* **Progressive Bank Heist**: A rare 1% chance to "crack the House Vault," stealing 20% of the Dealer's credits. Every kill on the server adds a 5cr "tax" to the vault, and if the vault exceeds 5,000cr, the reward escalates to 50% (Mega Heist).
+* **Jackpot Escalation**: Every kill on the server adds 5cr to the House Vault. If the vault exceeds 5,000cr, the heist reward escalates to 50% (Mega Heist).
 
 ### 5. Persistent Infrastructure
 
@@ -34,13 +37,12 @@ The `chaos.py` script is a comprehensive RPG-style server management system for 
 * **Multi-Port Ready**: Uses `timeout=20` and `conn.commit()` logic to allow multiple server instances (different ports) to read and write to the same database file without corruption or locking issues.
 * **Robust Regex Parsing**: Captures Slot ID, Name, and IP simultaneously to ensure the script always knows exactly who is on the server at any given second.
 
-
 ### 6. Anti-Grief & Team Protection
 
-* **Live Team Tracking**: The script parses the `status` command to monitor team assignments (Rebel vs. Imperial) in real-time across all game modes.
-* **Traitor Penalty**: Automatically detects Team Kills. Instead of rewards, the killer is slapped with a -500 XP and -1000cr penalty, their kill streak is reset, and a global "TRAITOR" announcement is broadcast.
+* **Live Team Tracking**: The script parses the status command to monitor team assignments (Rebel vs. Imperial) in real-time across all game modes.
+* **Traitor Penalty**: Automatically detects Team Kills. Instead of rewards, the killer is penalized -500 XP and -1000cr, and a global "TRAITOR" announcement is broadcast.
 * **Suicide/World Filtering**: Sophisticated filtering ignores world deaths (fall damage, map hazards) and suicides to prevent accidental XP loss or reward triggers.
-* **Anti-Farming Logic**: By validating team IDs before processing rewards, the script prevents players from killing friends on the same team to "farm" XP or credits.
+* **Anti-Farming Logic**: By validating team IDs before processing rewards, the script prevents players from "farming" XP or credits via teammates.
 
 ---
 
