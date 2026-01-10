@@ -609,7 +609,6 @@ class MBIIChaosPlugin:
             game = self.active_pazaak[p.name]
             parts = msg.split(" ")
             
-            # If they just type !side, show them their cards
             if len(parts) < 2:
                 cards_str = ", ".join([f"^{ '2' if c > 0 else '1' }{c}^7" for c in p.side_deck])
                 self.send_rcon(f'svtell {p.id} "^5[SIDE DECK] ^7Your cards: {cards_str}"')
@@ -621,21 +620,26 @@ class MBIIChaosPlugin:
                 if card_val in p.side_deck:
                     # Apply modifier
                     game["score"] += card_val
-                    p.side_deck.remove(card_val) # Use the card up
+                    p.side_deck.remove(card_val) 
                     
                     self.send_rcon(f'say "^5[PAZAAK] ^7{p.name} played a ^3{card_val} ^7side card! New Total: ^2{game["score"]}^7"')
                     
-                    # Add new card for next game session
+                    # Replenish side deck
                     p.side_deck.append(random.randint(-5, 5))
                     
-                    # Check for instant win (20)
+                    self.save_player_stat(p) 
+                    
                     if game["score"] == 20:
                         self.send_rcon(f'svtell {p.id} "^2PAZAAK! ^7You hit 20! Type ^2!stand ^7to claim the jackpot!"')
+                        # --- ADDED: Save progress at 20 ---
+                        self.save_player_stat(p)
+                        
                     elif game["score"] > 20:
                         remaining_bet = game["bet"] - int(game["bet"] * 0.1)
                         self.dealer_credits += remaining_bet
                         self.send_rcon(f'say "^7{p.name} ^1BUSTED ^7after side card! Pot is ^3{self.dealer_credits}cr^7."')
                         del self.active_pazaak[p.name]
+                        self.save_player_stat(p) 
                 else:
                     self.send_rcon(f'svtell {p.id} "^1Error: ^7You don\'t have a {card_val} card!"')
             except ValueError:
