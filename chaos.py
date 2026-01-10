@@ -740,7 +740,7 @@ class MBIIChaosPlugin:
             self.send_rcon(f'svtell {p.id} "{title} ^7{p.name} ^7- Lvl ^2{p.level} ^7| {progress}"')
         elif msg == "!vault" or msg == "!house":
             # Show the current progressive jackpot
-            self.send_rcon(f'svtell {p.id} "^5[HOUSE] ^7Current Vault: ^3{self.dealer_credits} Credits ^7(1% chance to heist on kill)"')                  
+            self.send_rcon(f'svtell {p.id} "^5[HOUSE] ^7Current Vault: ^3{self.dealer_credits} Credits ^7(1 percent chance to heist on kill)"')                  
 
     def run(self):
         log = self.settings['logname']
