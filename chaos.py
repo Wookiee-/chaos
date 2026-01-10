@@ -27,7 +27,7 @@ class Player:
         self.faction = faction.lower()
         self.streak = 0 
         self.credits = max(0, credits) 
-        self.bounty = 0                      
+        self.bounty = {}                      
         self.nemesis_map = {} 
         self.xp_per_lvl = int(config['xp_per_level'])
         self.dealer_credits = 0
@@ -82,16 +82,19 @@ class Player:
         return f"{color}{title_list[idx]}"
 
     def get_progress_bar(self):
-            # Calculate XP within the current level
-            xp_into_level = self.xp % self.xp_per_lvl
-            percentage = (xp_into_level / self.xp_per_lvl)
-            
-            # Create a 10-segment bar: I for filled, . for empty
-            filled = int(percentage * 10)
-            bar = "^2" + "I" * filled + "^7" + "." * (10 - filled)
-            
-            xp_left = self.xp_per_lvl - xp_into_level
-            return f"[{bar}^7] {int(percentage * 100)}% (^3{xp_left} XP left^7)"               
+        # Ensure we don't divide by zero
+        if self.xp_per_lvl <= 0: return "[..........] 0%"
+        
+        # Calculate XP within the current level
+        xp_into_level = self.xp % self.xp_per_lvl
+        percentage = min(xp_into_level / self.xp_per_lvl, 1.0)
+        
+        # 10-segment bar: I for filled, . for empty
+        filled = int(percentage * 10)
+        bar = "^2" + "I" * filled + "^7" + "." * (10 - filled)
+        
+        xp_left = self.xp_per_lvl - xp_into_level
+        return f"[{bar}^7] {int(percentage * 100)}% (^3{xp_left} XP left^7)"              
 
 class MBIIChaosPlugin:
     def __init__(self):
@@ -299,142 +302,120 @@ class MBIIChaosPlugin:
             k_id, v_id, w_id = int(k_id), int(v_id), int(w_id)
         except: return
 
-        # 1. Capture names using the IP-anchor regex
+        # 1. Capture names from the log line
         m = re.search(r'Kill:\s*\d+\s+\d+\s+\d+:\s*(.*?)\s+killed\s+(.*?)\s+by', raw_line)
         k_name_log = m.group(1).strip() if m else None
         v_name_log = m.group(2).strip() if m else None
 
-        # Resolve IP artifacts
-        if k_name_log and ("." in k_name_log or ":" in k_name_log):
-            p_k = next((x for x in self.players if x.id == k_id), None)
-            k_name_log = p_k.name if p_k else k_name_log
-        if v_name_log and ("." in v_name_log or ":" in v_name_log):
-            p_v = next((x for x in self.players if x.id == v_id), None)
-            v_name_log = p_v.name if p_v else v_name_log
+        # 2. OBJECT RETRIEVAL (Look in memory first, don't wipe memory with sync_player yet)
+        killer = next((x for x in self.players if x.id == k_id), None)
+        victim = next((x for x in self.players if x.id == v_id), None)
 
-        # Sync with SQLite Database
-        killer = self.sync_player(k_id, k_name_log) if k_name_log and k_id != 1022 else next((x for x in self.players if x.id == k_id), None)
-        victim = self.sync_player(v_id, v_name_log) if v_name_log else next((x for x in self.players if x.id == v_id), None)
+        # Fallback: if they aren't in memory but are valid players, sync them now
+        if not killer and k_id < 1000 and k_name_log:
+            killer = self.sync_player(k_id, k_name_log)
+        if not victim and v_id < 1000 and v_name_log:
+            victim = self.sync_player(v_id, v_name_log)
 
-        # --- UPDATED TEAM KILL PROTECTION ---
-        if killer and victim and k_id != v_id:
+        # 3. SAFETY CHECKS
+        if not victim: return 
+        if k_id == v_id or w_id in [97, 100]: # Suicide or World/falling
+            victim.streak = 0
+            return
+
+        # 4. TEAM KILL CHECK (Logic separation)
+        is_teamkill = False
+        if killer and self.current_server_mode != 3: # Mode 3 is Duel (No TK)
             k_team = getattr(killer, 'team', -1)
             v_team = getattr(victim, 'team', -2)
+            if k_team == v_team and k_team != 0 and k_team != -1:
+                is_teamkill = True
 
-            # ONLY apply TK penalty if it's NOT Duel Mode (3)
-            if self.current_server_mode != 3:
-                if k_team == v_team and k_team != 0:
-                    tk_penalty = 500
-                    killer.xp = max(0, killer.xp - tk_penalty)
-                    killer.credits = max(0, killer.credits - 1000)
-                    killer.streak = 0
-                    
-                    self.send_rcon(f'say "^1TRAITOR: ^7{killer.name} killed a teammate! Lost ^1{tk_penalty} XP^7!"')
-                    self.save_player_stat(killer)
-                    return # Penalty applied, stop processing
-            else:
-                # In Mode 3, we just pass through to the rewards below
-                pass
+        if is_teamkill:
+            tk_penalty = 500
+            killer.xp = max(0, killer.xp - tk_penalty)
+            killer.credits = max(0, killer.credits - 1000)
+            killer.streak = 0
+            self.send_rcon(f'say "^1TRAITOR: ^7{killer.name} killed a teammate! Lost ^1{tk_penalty} XP^7!"')
+            self.save_player_stat(killer)
+            return
 
-        if victim:
-            # Ignore Suicides/World Kills/Team Swaps
-            if k_id == v_id or w_id in [97, 100]: return
+        # 5. VICTIM LOGIC (XP Loss)
+        old_lvl_v = victim.level
+        loss = int(self.settings.get('xp_loss', 10))
+        if victim.xp >= loss:
+            victim.xp -= loss
+            loss_str = f"^1(-{loss} XP)"
+        else:
+            victim.xp = 0
+            loss_str = "^5(Protected)"
+        
+        victim.deaths += 1
+        victim.streak = 0
 
-            old_lvl_v = victim.level
-            loss = int(self.settings.get('xp_loss', 10))
+        # 6. KILLER LOGIC (Rewards)
+        if killer and k_id != 1022:
+            old_lvl_k = killer.level
+            xp_gain = int(self.settings.get('xp_per_kill', 50))
+            cred_gain = int(self.settings.get('passive_credit_gain', 10))
+            bonus_str = ""
+
+            # --- Random Events ---
+            mult = 3 if random.random() < 0.05 else 1
+            if mult > 1: 
+                self.send_rcon(f'say "^3FORCE SURGE: ^7{killer.name} tapped into the Force for ^23x XP^7!"')
             
-            # XP Loss Logic
-            if victim.xp >= loss:
-                victim.xp -= loss
-                loss_str = f"^1(-{loss} XP)"
-            else:
-                victim.xp = 0
-                loss_str = "^5(Last Stand Protected)"
+            # --- Revenge ---
+            if killer.name in victim.nemesis_map and victim.nemesis_map[killer.name] >= 3:
+                revenge_bonus = 200
+                killer.credits += revenge_bonus
+                victim.nemesis_map[killer.name] = 0
+                bonus_str += f" ^5[REVENGE +{revenge_bonus}cr]"
+
+            # --- Theft ---
+            if victim.credits > 5000:
+                stolen = int(victim.credits * 0.05)
+                victim.credits -= stolen
+                killer.credits += stolen
+                bonus_str += f" ^1[STOLE {stolen}cr]"
+
+            # --- Stats Update ---
+            killer.kills += 1
+            killer.streak += 1
+            killer.xp += (xp_gain * mult)
             
-            victim.deaths += 1
-            victim.streak = 0
-            self.save_player_stat(victim) # Update DB immediately
+            # --- Nemesis Tracking ---
+            killer.nemesis_map[victim.name] = killer.nemesis_map.get(victim.name, 0) + 1
+            if killer.nemesis_map[victim.name] == 3:
+                self.send_rcon(f'say "^1NEMESIS: ^7{killer.name} is dominating {victim.name}!"')
 
-            # Reward Killer
-            if k_id != 1022 and killer and killer.id != victim.id:
-                old_lvl_k = killer.level
-                xp_gain = int(self.settings.get('xp_per_kill', 50))
-                cred_gain = int(self.settings.get('passive_credit_gain', 10))
-                bonus_str = ""
+            # --- Payouts (Bounties/Bets) ---
+            b_reward = 0
+            if hasattr(victim, 'bounty') and isinstance(victim.bounty, dict):
+                b_reward = sum(victim.bounty.values())
+                victim.bounty = {}
 
-                # --- 1. FORCE SURGE (5% Chance) ---
-                mult = 3 if random.random() < 0.05 else 1
-                if mult > 1: 
-                    self.send_rcon(f'say "^3FORCE SURGE: ^7{killer.name} tapped into the Force for ^23x XP^7!"')
-                
-                # --- 2. REVENGE SYSTEM ---
-                # If the victim was dominating the killer, grant revenge bonus
-                if killer.name in victim.nemesis_map and victim.nemesis_map[killer.name] >= 3:
-                    revenge_bonus = 200
-                    killer.credits += revenge_bonus
-                    victim.nemesis_map[killer.name] = 0 # Break the dominance
-                    bonus_str += f" ^5[REVENGE +{revenge_bonus}cr]"
+            bet_reward = 0
+            if killer.id in self.active_bets:
+                bet_data = self.active_bets.pop(killer.id)
+                bet_reward = (sum(bet_data.values()) if isinstance(bet_data, dict) else int(bet_data)) * 2
 
-                # --- 3. THEFT (Wealth Redistribution) ---
-                # If victim is rich (>5000cr), killer steals 5%
-                if victim.credits > 5000:
-                    stolen = int(victim.credits * 0.05)
-                    victim.credits -= stolen
-                    killer.credits += stolen
-                    bonus_str += f" ^1[STOLE {stolen}cr]"
+            killer.credits += (cred_gain + b_reward + bet_reward)
 
-                # --- 4. BANK HEIST (1% Rare Event) ---
-                if random.random() < 0.01 and self.dealer_credits > 100:
-                    heist = int(self.dealer_credits * 0.20) # 20% of pazaak pool
-                    self.dealer_credits -= heist
-                    killer.credits += heist
-                    self.send_rcon(f'say "^3HEIST: ^7{killer.name} cracked the House Vault for ^2{heist}cr^7!"')
+            # --- Final Announcement ---
+            payout_val = b_reward + bet_reward
+            payout_str = f" & secured ^3{payout_val}cr^7" if payout_val > 0 else ""
+            k_title = killer.get_title(self.current_server_mode)
+            v_title = victim.get_title(self.current_server_mode)
+            
+            self.send_rcon(f'say "{k_title} ^2{killer.name} ^7defeated {v_title} ^1{victim.name} ^3(+{xp_gain * mult} XP){payout_str} {loss_str}{bonus_str}"')
+            
+            # Final Save & Check
+            self.check_rank_change(killer, old_lvl_k)
+            self.save_player_stat(killer)
 
-                # --- 5. KILLING SPREE SYSTEM ---
-                killer.kills += 1
-                killer.streak += 1
-                if killer.streak == 5:
-                    self.send_rcon(f'say "^2SPREE: ^7{killer.name} is on a ^1Killing Spree^7!"')
-                elif killer.streak == 10:
-                    self.send_rcon(f'say "^2SPREE: ^7{killer.name} is ^1UNSTOPPABLE^7!"')
-                elif killer.streak == 15:
-                    self.send_rcon(f'say "^2SPREE: ^7{killer.name} is ^1GODLIKE^7!"')
-
-                # --- 6. NEMESIS TRACKING ---
-                killer.nemesis_map[victim.name] = killer.nemesis_map.get(victim.name, 0) + 1
-                if killer.nemesis_map[victim.name] == 3:
-                    self.send_rcon(f'say "^1NEMESIS: ^7{killer.name} is dominating {victim.name}!"')
-
-                # Update XP and base credits
-                killer.xp += (xp_gain * mult)
-                
-                # --- Payout Logic (Bounties & Bets) ---
-                b_reward = 0
-                if isinstance(victim.bounty, dict) and victim.bounty:
-                    b_reward = sum(victim.bounty.values())
-                    victim.bounty = {} # Claimed
-                
-                bet_reward = 0
-                if killer.id in self.active_bets:
-                    bet_data = self.active_bets.pop(killer.id)
-                    bet_reward = (sum(bet_data.values()) if isinstance(bet_data, dict) else int(bet_data)) * 2
-                
-                if victim.id in self.active_bets:
-                    self.active_bets.pop(victim.id) 
-                
-                killer.credits += (cred_gain + b_reward + bet_reward)
-
-                # --- Final Announcement ---
-                payout_val = b_reward + bet_reward
-                payout_str = f" & secured ^3{payout_val}cr^7" if payout_val > 0 else ""
-                k_title = killer.get_title(self.current_server_mode)
-                v_title = victim.get_title(self.current_server_mode)
-                
-                self.send_rcon(f'say "{k_title} ^2{killer.name} ^7defeated {v_title} ^1{victim.name} ^3(+{xp_gain * mult} XP){payout_str} {loss_str}{bonus_str}"')
-                
-                self.check_rank_change(killer, old_lvl_k)
-                self.save_player_stat(killer)
-                self.save_player_stat(victim) # Save victim credits if they were robbed
+        # Always save the victim (for death count/xp loss/theft)
+        self.save_player_stat(victim)
 
     def play_pazaak(self, p, amount):
         if p.credits < amount:
@@ -477,7 +458,7 @@ class MBIIChaosPlugin:
 
         # Now that we have 'p', use the ID from the server status, not the log
         target_sid = p.id
-        # print(f"[#] Executing {msg} for {p.name} on SID {target_sid}")   
+        # print(f"[#] Executing {msg} for {p.name} on SID {p.id}")   
             
         msg = msg.lower().strip()
 
@@ -497,9 +478,9 @@ class MBIIChaosPlugin:
             # Usage check
             if len(parts) < 2 or parts[1].strip() == "":
                 # Notice the 'f' before the quote!
-                self.send_rcon(f'svtell {target_sid} "^3Usage: !title <career_name> {mode_note}"')
-                self.send_rcon(f'svtell {target_sid} "^5Hero: ^7{hero_list}"')
-                self.send_rcon(f'svtell {target_sid} "^1Villain: ^7{villain_list}"')
+                self.send_rcon(f'svtell {p.id} "^3Usage: !title <career_name> {mode_note}"')
+                self.send_rcon(f'svtell {p.id} "^5Hero: ^7{hero_list}"')
+                self.send_rcon(f'svtell {p.id} "^1Villain: ^7{villain_list}"')
                 return
 
             choice = parts[1].lower().strip().replace(" ", "")
@@ -524,7 +505,7 @@ class MBIIChaosPlugin:
             if choice in mapping:
                 target_faction = mapping[choice]
                 if self.current_server_mode == 3 and target_faction not in ["jedi", "sith"]:
-                    self.send_rcon(f'svtell {target_sid} "^1Error: ^7The career ^3{choice} ^7is not available in Duel Mode!"')
+                    self.send_rcon(f'svtell {p.id} "^1Error: ^7The career ^3{choice} ^7is not available in Duel Mode!"')
                     return 
 
                 p.faction = target_faction
@@ -532,28 +513,28 @@ class MBIIChaosPlugin:
                 title_display = p.get_title(self.current_server_mode)
                 self.send_rcon(f'say "^7{p.name} ^7has chosen the career: {title_display}^7!"')
             else:
-                self.send_rcon(f'svtell {target_sid} "^1Error: ^7Career \'{choice}\' not found."')
-                self.send_rcon(f'svtell {target_sid} "^5Hero: ^7{hero_list}"')
-                self.send_rcon(f'svtell {target_sid} "^1Villain: ^7{villain_list}"')
+                self.send_rcon(f'svtell {p.id} "^1Error: ^7Career \'{choice}\' not found."')
+                self.send_rcon(f'svtell {p.id} "^5Hero: ^7{hero_list}"')
+                self.send_rcon(f'svtell {p.id} "^1Villain: ^7{villain_list}"')
 
         elif msg == "!help" or msg == "!commands":        
-            self.send_rcon(f'svtell {target_sid} "^5--- CHAOS COMMANDS ---"')
-            self.send_rcon(f'svtell {target_sid} "^3Personal: ^7!rank, !stats, !bank, !title !level"')
-            self.send_rcon(f'svtell {target_sid} "^3Economy: ^7!pay <name> <amt>, !wealth, !top"')
-            self.send_rcon(f'svtell {target_sid} "^3Gambling: ^7!pazaak <amt>, !bet <name> <amt>, !bounty <name> <amt>"')
-            self.send_rcon(f'svtell {target_sid} "^2Pazaak Info: ^7Hit 20 for 3x Payout!"')
+            self.send_rcon(f'svtell {p.id} "^5--- CHAOS COMMANDS ---"')
+            self.send_rcon(f'svtell {p.id} "^3Personal: ^7!rank, !stats, !bank, !title !level"')
+            self.send_rcon(f'svtell {p.id} "^3Economy: ^7!pay <name> <amt>, !wealth, !top"')
+            self.send_rcon(f'svtell {p.id} "^3Gambling: ^7!pazaak <amt>, !bet <name> <amt>, !bounty <name> <amt>"')
+            self.send_rcon(f'svtell {p.id} "^2Pazaak Info: ^7Hit 20 for 3x Payout!"')
         # Check for the command without a space first, or the command with a space
         elif msg == "!pazaak" or msg.startswith("!pazaak "):
             parts = msg.split()
             if len(parts) < 2:
                 # Yellow usage text
-                self.send_rcon(f'svtell {target_sid} "^3Usage: !pazaak <amount>"')
+                self.send_rcon(f'svtell {p.id} "^3Usage: !pazaak <amount>"')
             else:
                 try:
                     amt = int(parts[1])
                     self.play_pazaak(p, amt)
                 except ValueError:
-                    self.send_rcon(f'svtell {target_sid} "^1Error: Amount must be a number."')
+                    self.send_rcon(f'svtell {p.id} "^1Error: Amount must be a number."')
         elif msg == "!hit" and p.name in self.active_pazaak:
             game = self.active_pazaak[p.name]
             card = random.randint(1, 10)
@@ -597,9 +578,9 @@ class MBIIChaosPlugin:
             self.save_player_stat(p)     
         elif msg == "!rank": 
             display_title = p.get_title(self.current_server_mode)
-            self.send_rcon(f'svtell {target_sid} "^7{p.name}: {display_title} ^7| Lvl: ^2{p.level} ^7| XP: ^2{p.xp}"')
+            self.send_rcon(f'svtell {p.id} "^7{p.name}: {display_title} ^7| Lvl: ^2{p.level} ^7| XP: ^2{p.xp}"')
         elif msg == "!stats": 
-            self.send_rcon(f'svtell {target_sid} "^7STATS: {p.name} ^2Kills: {p.kills} ^1Deaths: {p.deaths}"')
+            self.send_rcon(f'svtell {p.id} "^7STATS: {p.name} ^2Kills: {p.kills} ^1Deaths: {p.deaths}"')
         elif msg == "!wealth":
             with sqlite3.connect(self.db_filename, timeout=20) as conn:
                 cursor = conn.cursor()
@@ -612,7 +593,7 @@ class MBIIChaosPlugin:
             # Sum up the total value of all bounty contributions
             total_bounty = sum(p.bounty.values()) if isinstance(p.bounty, dict) else 0
             b_msg = f" ^1(Bounty: {total_bounty})" if total_bounty > 0 else ""
-            self.send_rcon(f'svtell {target_sid} "^5[BANK] ^2{p.name}^7, you have ^3{p.credits} Credits^7.{b_msg}"')
+            self.send_rcon(f'svtell {p.id} "^5[BANK] ^2{p.name}^7, you have ^3{p.credits} Credits^7.{b_msg}"')
         elif msg == "!bounties":
             active_bounties = [pl for pl in self.players if isinstance(pl.bounty, dict) and sum(pl.bounty.values()) > 0]
         
@@ -638,12 +619,12 @@ class MBIIChaosPlugin:
                         break 
                 
                 if not found_bounty:
-                    self.send_rcon(f'svtell {target_sid} "^1Error: ^7You do not have any active bounties to cancel."')
+                    self.send_rcon(f'svtell {p.id} "^1Error: ^7You do not have any active bounties to cancel."')
                 return
 
             try:
                 if len(parts) < 3:
-                    self.send_rcon(f'svtell {target_sid} "^3Usage: !bounty <name> <amount> ^7OR ^3!bounty cancel"')
+                    self.send_rcon(f'svtell {p.id} "^3Usage: !bounty <name> <amount> ^7OR ^3!bounty cancel"')
                     return
 
                 target_name = parts[1].lower()
@@ -661,14 +642,14 @@ class MBIIChaosPlugin:
                     self.send_rcon(f'say "^1WAGER: ^7{p.name} put a ^3{amount}cr ^7bounty on {target.name}! Total: ^1{total}cr^7!"')
                     self.save_player_stat(p)
                 elif not target:
-                    self.send_rcon(f'svtell {target_sid} "^1Error: ^7Player \'{parts[1]}\' not found."')
+                    self.send_rcon(f'svtell {p.id} "^1Error: ^7Player \'{parts[1]}\' not found."')
             except ValueError:
-                self.send_rcon(f'svtell {target_sid} "^1Error: ^7Amount must be a number."')
+                self.send_rcon(f'svtell {p.id} "^1Error: ^7Amount must be a number."')
         elif msg.startswith("!bet"):
             try:
                 parts = msg.split(" ")
                 if len(parts) < 3:
-                    self.send_rcon(f'svtell {target_sid} "^7Usage: !bet <name> <amount>"')
+                    self.send_rcon(f'svtell {p.id} "^7Usage: !bet <name> <amount>"')
                     return
                 
                 target_name = parts[1].lower()
@@ -676,7 +657,7 @@ class MBIIChaosPlugin:
                 target = next((x for x in self.players if target_name in x.name.lower()), None)
 
                 if not target:
-                    self.send_rcon(f'svtell {target_sid} "^1Error: ^7Player \'{parts[1]}\' not found."')
+                    self.send_rcon(f'svtell {p.id} "^1Error: ^7Player \'{parts[1]}\' not found."')
                     return
 
                 if p.credits >= amt and amt > 0:
@@ -692,14 +673,14 @@ class MBIIChaosPlugin:
                     self.send_rcon(f'say "^2BET: ^5{p.name} ^7bet ^3{amt}cr ^7on ^5{target.name}^7!"')
                     self.save_player_stat(p)
                 else:
-                    self.send_rcon(f'svtell {target_sid} "^1Error: ^7Insufficient credits."')
+                    self.send_rcon(f'svtell {p.id} "^1Error: ^7Insufficient credits."')
             except ValueError:
-                self.send_rcon(f'svtell {target_sid} "^1Error: ^7Amount must be a number."')
+                self.send_rcon(f'svtell {p.id} "^1Error: ^7Amount must be a number."')
         elif msg.startswith("!pay"):
             try:
                 parts = msg.split(" ")
                 if len(parts) < 3:
-                    self.send_rcon(f'svtell {target_sid} "^7Usage: !pay <name> <amount>"')
+                    self.send_rcon(f'svtell {p.id} "^7Usage: !pay <name> <amount>"')
                     return
                 
                 target_name = parts[1].lower()
@@ -709,11 +690,11 @@ class MBIIChaosPlugin:
                 target = next((x for x in self.players if target_name in x.name.lower()), None)
 
                 if not target:
-                    self.send_rcon(f'svtell {target_sid} "^1Error: ^7Player \'{parts[1]}\' not found."')
+                    self.send_rcon(f'svtell {p.id} "^1Error: ^7Player \'{parts[1]}\' not found."')
                     return
                 
                 if target == p:
-                    self.send_rcon(f'svtell {target_sid} "^1Error: ^7You cannot pay yourself!"')
+                    self.send_rcon(f'svtell {p.id} "^1Error: ^7You cannot pay yourself!"')
                     return
 
                 if p.credits >= amount and amount > 0:
@@ -722,9 +703,9 @@ class MBIIChaosPlugin:
                     self.send_rcon(f'say "^2TRANSFER: ^7{p.name} sent ^3{amount} Credits ^7to {target.name}!"')
                     self.save_player_stat(p)
                 else:
-                    self.send_rcon(f'svtell {target_sid} "^1Error: ^7Insufficient credits."')
+                    self.send_rcon(f'svtell {p.id} "^1Error: ^7Insufficient credits."')
             except:
-                self.send_rcon(f'svtell {target_sid} "^7Usage: !pay <name> <amount>"')  
+                self.send_rcon(f'svtell {p.id} "^7Usage: !pay <name> <amount>"')  
         elif msg == "!top":
             with sqlite3.connect(self.db_filename, timeout=20) as conn:
                 cursor = conn.cursor()
@@ -739,7 +720,7 @@ class MBIIChaosPlugin:
             progress = p.get_progress_bar()
             
             # ADD THE 'f' HERE:
-            self.send_rcon(f'svtell {target_sid} "{title} ^7{p.name} ^7- Lvl ^2{p.level} ^7| {progress}"')              
+            self.send_rcon(f'svtell {p.id} "{title} ^7{p.name} ^7- Lvl ^2{p.level} ^7| {progress}"')              
 
     def run(self):
         log = self.settings['logname']
