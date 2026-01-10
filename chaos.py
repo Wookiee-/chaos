@@ -629,7 +629,6 @@ class MBIIChaosPlugin:
             parts = msg.split(" ")
             
             if len(parts) == 2 and parts[1] == "cancel":
-
                 found_bounty = False
                 for target in self.players:
                     if isinstance(target.bounty, dict) and p.name in target.bounty:
@@ -653,17 +652,22 @@ class MBIIChaosPlugin:
                 amount = int(parts[2])
                 target = next((x for x in self.players if target_name in x.name.lower()), None)
 
-                if target and p.credits >= amount and amount > 0:
-                    if not isinstance(target.bounty, dict): target.bounty = {}
-                    
-                    p.credits -= amount
-                    # Add to existing contribution or start a new one
-                    target.bounty[p.name] = target.bounty.get(p.name, 0) + amount
-                    
-                    total = sum(target.bounty.values())
-                    self.send_rcon(f'say "^1WAGER: ^7{p.name} put a ^3{amount}cr ^7bounty on {target.name}! Total: ^1{total}cr^7!"')
-                    self.save_player_stat(p)
-                elif not target:
+                if target:
+                    # --- ADDED: SELF-BOUNTY CHECK ---
+                    if target.id == p.id:
+                        self.send_rcon(f'svtell {p.id} "^1Error: ^7You cannot put a bounty on yourself!"')
+                        return
+
+                    if p.credits >= amount and amount > 0:
+                        if not isinstance(target.bounty, dict): target.bounty = {}
+                        
+                        p.credits -= amount
+                        target.bounty[p.name] = target.bounty.get(p.name, 0) + amount
+                        
+                        total = sum(target.bounty.values())
+                        self.send_rcon(f'say "^1WAGER: ^7{p.name} put a ^3{amount}cr ^7bounty on {target.name}! Total: ^1{total}cr^7!"')
+                        self.save_player_stat(p)
+                else:
                     self.send_rcon(f'svtell {p.id} "^1Error: ^7Player \'{parts[1]}\' not found."')
             except ValueError:
                 self.send_rcon(f'svtell {p.id} "^1Error: ^7Amount must be a number."')
@@ -682,14 +686,17 @@ class MBIIChaosPlugin:
                     self.send_rcon(f'svtell {p.id} "^1Error: ^7Player \'{parts[1]}\' not found."')
                     return
 
+                # --- ADDED: SELF-BET CHECK ---
+                if target.id == p.id:
+                    self.send_rcon(f'svtell {p.id} "^1Error: ^7You cannot bet on yourself!"')
+                    return
+
                 if p.credits >= amt and amt > 0:
                     p.credits -= amt
                     
-                    # Track bets using a nested dictionary: {target_id: {player_name: amount}}
                     if target.id not in self.active_bets:
                         self.active_bets[target.id] = {}
                     
-                    # Store the original bet amount (we calculate the 2x payout later)
                     self.active_bets[target.id][p.name] = self.active_bets[target.id].get(p.name, 0) + amt
                     
                     self.send_rcon(f'say "^2BET: ^5{p.name} ^7bet ^3{amt}cr ^7on ^5{target.name}^7!"')
