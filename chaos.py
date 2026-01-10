@@ -11,11 +11,9 @@ import unicodedata
 
 def normalize(name):
     if not name: return ""
-    # 1. Strip MBII color codes
+    # Strip color codes (^ and whatever follows)
     name = re.sub(r'\^.', '', name)
-    # 2. Convert accented characters (å -> a)
-    name = unicodedata.normalize('NFKD', name).encode('ascii', 'ignore').decode('ascii')
-    # 3. Strip EVERYTHING that isn't a letter or number
+    # Strip brackets and symbols
     name = re.sub(r'[^a-zA-Z0-9]', '', name)
     return name.lower().strip()
 
@@ -110,6 +108,7 @@ class MBIIChaosPlugin:
         self.active_pazaak = {} # NEW: Tracks active card games
         self.dealer_credits = 0  
         self.init_sqlite()
+        self.last_sync_time = 0
 
     def init_sqlite(self):
         with sqlite3.connect(self.db_filename, timeout=20) as conn:
@@ -147,16 +146,21 @@ class MBIIChaosPlugin:
 
     def sync_player(self, sid, raw_name, ip="0.0.0.0"):
         clean = normalize(raw_name)
+        
+        # NEW: Create a friendly display name for memory and UI
+        # This strips color codes like ^7 and brackets []
+        display_name = re.sub(r'\^.', '', raw_name).replace('[', '').replace(']', '').strip()
+        
         with sqlite3.connect(self.db_filename, timeout=20) as conn:
             cursor = conn.cursor()
             
-            # 1. Try to find by name first
+            # 1. Try to find by name first using the normalized 'clean' name
             cursor.execute("SELECT xp, kills, deaths, faction, credits, last_ip FROM players WHERE clean_name = ?", (clean,))
             data = cursor.fetchone()
             
             if data:
                 xp, kills, deaths, faction, credits, last_ip = data
-                # Keep IP address fresh
+                # Keep IP address fresh in the database
                 if ip != last_ip:
                     cursor.execute("UPDATE players SET last_ip = ? WHERE clean_name = ?", (ip, clean))
                     conn.commit()
@@ -168,18 +172,21 @@ class MBIIChaosPlugin:
                 if alt_data:
                     old_name, xp, kills, deaths, faction, credits = alt_data
                     # IP MATCH: Update the existing record with the new name
-                    cursor.execute("UPDATE players SET name = ?, clean_name = ? WHERE last_ip = ?", (raw_name, clean, ip))
+                    cursor.execute("UPDATE players SET name = ?, clean_name = ? WHERE last_ip = ?", (display_name, clean, ip))
                     conn.commit()
                 else:
                     # 3. TRULY NEW: No name match and no IP match
                     xp, kills, deaths, faction, credits = 0, 0, 0, "jedi", 100
                     cursor.execute("INSERT INTO players (name, clean_name, last_ip, xp, kills, deaths, faction, credits) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                                   (raw_name, clean, ip, xp, kills, deaths, faction, credits))
+                                   (display_name, clean, ip, xp, kills, deaths, faction, credits))
                     conn.commit()
         
-        # Remove duplicates from memory and create player object
+        # Remove duplicates from memory and create the player object with the clean display_name
         self.players = [p for p in self.players if normalize(p.name) != clean]
-        p = Player(sid, raw_name, xp, kills, deaths, faction, credits, self.settings)
+        
+        # Use display_name so !top, !wealth, and !rank look professional
+        p = Player(sid, display_name, xp, kills, deaths, faction, credits, self.settings)
+        p.raw_name = raw_name # Store the original color-coded name if you ever need it for specific RCON commands
         p.ip = ip 
         self.players.append(p)
         return p
@@ -227,56 +234,49 @@ class MBIIChaosPlugin:
 
     def sync_current_players(self):
         response = self.send_rcon("status", True)
-        if not response: return
+        if not response: 
+            print("[!] Status check failed: No response from server.")
+            return
         
         lines = response.split('\n')
         active_sids = []
 
         for line in lines:
-            # Group 1: SID | Group 2: Name | Group 3: IP | Group 4: Team
-            # Added \s+(\d)$ to the end to catch the team digit
-            match = re.search(r'^\s*(\d+)\s+-?\d+\s+\d+\s+(.*?)\s+\d+\s+(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}).*?\s+(\d)$', line)
+            # NEW REGEX BASED ON YOUR SCREENSHOT:
+            # 1. ^\s*(\d+) -> Capture Slot ID (2)
+            # 2. \s+\-?\d+\s+\d+ -> Skip Score (0) and Ping (199)
+            # 3. \s+(.*?)\s+ -> Capture Name (^7Valzhar), stopping at the first big space
+            # 4. (\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}) -> Find the IP as the anchor
+            match = re.search(r'^\s*(\d+)\s+\-?\d+\s+\d+\s+(.*?)\s{2,}(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})', line)
             
             if match:
                 try:
                     sid = int(match.group(1))
                     raw_name = match.group(2).strip()
                     ip = match.group(3)
-                    team_id = int(match.group(4)) # New: 1=Rebel, 2=Imp
                     
-                    if raw_name.endswith("^7"):
-                        raw_name = raw_name[:-2].strip()
+                    # Your status shows ^7 before the name. Let's strip that.
+                    if raw_name.startswith("^7"):
+                        raw_name = raw_name[2:].strip()
+                    
+                    # Remove any extra quotes if the server adds them
+                    raw_name = raw_name.replace('"', '')
                     
                     active_sids.append(sid)
                     
-                    p = next((x for x in self.players if x.id == sid), None)
+                    norm_name = normalize(raw_name)
+                    p = next((x for x in self.players if normalize(x.name) == norm_name), None)
+                    
                     if not p:
                         p = self.sync_player(sid, raw_name, ip)
-                    
-                    p.team = team_id # Store the current team
-                    
-                    active_sids.append(sid)
-                    norm_name = normalize(raw_name)
-
-                    p = next((x for x in self.players if normalize(x.name) == norm_name), None)
-                    if p:
-                        p.id = sid
-                        if hasattr(p, 'ip'): p.ip = ip
                     else:
-                        # Now passes the IP to the database sync logic
-                        self.sync_player(sid, raw_name, ip)
+                        p.id = sid
                         
                 except Exception as e:
-                    print(f"[!] Error parsing player: {e}")
+                    print(f"[!] Status Parse Error: {e}")
 
-        # --- Cleanup Logic (Disconnected Players) ---
-        for p_mem in self.players[:]:
-            if p_mem.id not in active_sids:
-                total_bounty = sum(p_mem.bounty.values()) if isinstance(p_mem.bounty, dict) else 0
-                if total_bounty > 0:
-                    p_mem.bounty = {} # Clear bounty for players who left
-                
-                self.players.remove(p_mem)   
+        self.players = [p for p in self.players if p.id in active_sids]
+        # print(f"[DEBUG] Sync Complete. Active Players: {[p.name for p in self.players]}")
 
     def check_rank_change(self, player, old_level):
         new_level = player.level
@@ -447,28 +447,30 @@ class MBIIChaosPlugin:
         self.save_player_stat(p)
 
     def handle_chat(self, sid, name, msg):
-        clean_log_name = normalize(name) #
-        msg = msg.lower().strip() #
+        clean_log_name = normalize(name)
+        msg = msg.lower().strip()
         
-        if not msg.startswith("!"): #
+        if not msg.startswith("!"):
             return
 
-        # Attempt 1: Check memory for ID or Name
-        p = next((x for x in self.players if x.id == sid or normalize(x.name) == clean_log_name), None)
+        # Try to find the player in memory
+        # We check if the name matches OR the SID matches
+        p = next((x for x in self.players if normalize(x.name) == clean_log_name or x.id == sid), None)
         
-        # Attempt 2: Force a server scan if not found
         if not p:
+            # If not found, the memory is out of sync. Force a refresh.
+            print(f"[!] Player {clean_log_name} not in memory. Syncing...")
             self.sync_current_players()
-            p = next((x for x in self.players if x.id == sid or normalize(x.name) == clean_log_name), None)
+            # Try finding again after sync
+            p = next((x for x in self.players if normalize(x.name) == clean_log_name or x.id == sid), None)
 
         if not p:
-            print(f"[!] Critical: Could not resolve player '{clean_log_name}'") #
+            print(f"[!] Still could not resolve '{clean_log_name}'. Check RCON 'status' output format.")
             return
 
-        # Safety update for SIDs
-        if sid != -1:
-            p.id = sid #
-        target_sid = p.id #    
+        # Now that we have 'p', use the ID from the server status, not the log
+        target_sid = p.id
+        # print(f"[#] Executing {msg} for {p.name} on SID {target_sid}")   
             
         msg = msg.lower().strip()
 
@@ -735,11 +737,13 @@ class MBIIChaosPlugin:
     def run(self):
         log = self.settings['logname']
         print(f"[*] Chaos Plugin Active. Monitoring: {log}")
+        
+        # Initial sync on startup
         self.sync_current_players()
+        # Timer initialization
+        self.last_sync_time = time.time() 
 
         startup_resp = str(self.send_rcon("g_authenticity", True)).lower()
-        
-        # This checks for the value 3 inside the quotes, ignoring color codes
         if '="3"' in startup_resp.replace("^7", "").replace("^9", "").replace(" ", ""):
             self.current_server_mode = 3
         else:
@@ -747,6 +751,13 @@ class MBIIChaosPlugin:
 
         last_sz = os.path.getsize(log) if os.path.exists(log) else 0
         while True:
+            # --- ALWAYS SYNCED LOGIC (TIMER) ---
+            # Every 60 seconds, refresh the player list to clean out 
+            # players who disconnected without the log noticing.
+            if time.time() - self.last_sync_time > 60:
+                self.sync_current_players()
+                self.last_sync_time = time.time()
+
             if not os.path.exists(log):
                 time.sleep(1); continue
             curr_sz = os.path.getsize(log)
@@ -772,6 +783,7 @@ class MBIIChaosPlugin:
                             # Re-scan the server immediately to get new SIDs
                             time.sleep(2) # Wait a moment for server to stabilize
                             self.sync_current_players()
+                            self.last_sync_time = time.time()
                             continue
                         if "ClientUserinfoChanged:" in line:
                             m = re.search(r'ClientUserinfoChanged:\s*(\d+)\s*n\\([^\\]+)', line)
@@ -810,38 +822,37 @@ class MBIIChaosPlugin:
                             m = re.search(r'Kill:\s*(\d+)\s+(\d+)\s+(\d+):', line)
                             if m:
                                 self.process_kill(m.group(1), m.group(2), m.group(3), line)
-                        elif " say: " in line:
-                            # Strict Regex
-                            sid_match = re.search(r'\s(\d{1,2}):\s+say:', line)
+                        # Inside your run() loop
+                        elif "say:" in line:
+                            # 1. Correctly extract the real SID (the number right before 'say:')
+                            # In "1265:44 2: say:", this matches the '2'
+                            sid_match = re.search(r'(\d+):\s+say:', line)
                             log_sid = int(sid_match.group(1)) if sid_match else -1
                             
-                            # --- DEBUG LOG PARSING ---
-                            #if "!" in line:
-                            #    print(f"[DEBUG] Log Line Detected: {line}")
-                            #    print(f"[DEBUG] Extracted SID: {log_sid}")
+                            # 2. Extract Name and Message
+                            m_chat = re.search(r'say:\s+(?:\^0\[\^7)?(.*?)(?:\^0\])?:\s*"(.*)"', line)
                             
-                            m_chat = re.search(r'say:\s*(.*?):\s*"(.*)"', line)
                             if m_chat:
                                 name_raw = m_chat.group(1).strip()
-                                # Strip color codes for internal logic
-                                name_clean = re.sub(r'\^\d', '', name_raw).strip()
-                                message = m_chat.group(2).strip().replace('"', '')
-                                self.handle_chat(log_sid, name_clean, message)
-
-                        elif "tell:" in line:
-                            try:
-                                # Strict Regex for private messages
-                                sid_match = re.search(r'\s(\d{1,2}):\s+tell:', line)
-                                log_sid = int(sid_match.group(1)) if sid_match else -1
+                                message = m_chat.group(2).strip()
                                 
-                                m_tell = re.search(r'tell:\s*(.*?) to .*?:\s*"(.*)"', line)
-                                if m_tell:
-                                    name_raw = m_tell.group(1).strip()
-                                    name_clean = re.sub(r'\^\d', '', name_raw).strip()
-                                    message = m_tell.group(2).strip().replace('"', '')
-                                    self.handle_chat(log_sid, name_clean, message)
-                            except Exception as e:
-                                print(f"[!] Tell Parsing Error: {e}")
+                                # Pass the REAL log_sid (2) to handle_chat
+                                self.handle_chat(log_sid, name_raw, message)
+
+                        # Updated detection for Private Messages (tell)
+                        elif "tell:" in line:
+                            # Skips timestamp and captures Sender to Receiver: "Message"
+                            m_tell = re.search(r'tell:\s+(?:\^0\[\^7)?(.*?)(?:\^0\])? to .*?:\s*"(.*)"', line)
+                            
+                            if m_tell:
+                                name_raw = m_tell.group(1).strip()
+                                message = m_tell.group(2).strip()
+                                name_clean = normalize(name_raw)
+                                
+                                p = next((x for x in self.players if normalize(x.name) == name_clean), None)
+                                if p:
+                                    self.handle_chat(p.id, name_raw, message)
+                        
                 last_sz = curr_sz
             time.sleep(0.2)
 
