@@ -9,25 +9,30 @@ The `chaos.py` script is a comprehensive RPG-style server management system for 
 * **Dynamic Title Logic**: The `get_title` system automatically assigns colors (Cyan for Heroes, Red for Villains) and ranks based on the player's chosen faction and current level.
 
 ### 2. "Smart Switch" Mode Awareness
-* **Duel Mode Restriction (Mode 3)**: The script scans the server's `g_authenticity` setting; if set to Mode 3, all players are visually restricted to "Jedi" or "Sith" titles.
+* **Duel Mode Restriction (Mode 3)**: Automatically detects `g_authenticity` setting and restricts all players to "Jedi" or "Sith" titles, regardless of their chosen career.
 * **Open Mode (0, 1, 2, 4)**: In all other modes, the full diversity of careers (Mandalorian, ARC Trooper, Droideka, etc.) is unlocked.
-* **Command Blocking**: If a player attempts to change to a non-Force career while in Duel Mode, the script blocks the change with an error message.
+* **Command Blocking**: Prevents players from switching to non-Force careers via `!title` while the server is in Duel Mode.
 
 ### 3. Economic & Gambling Features
-* **Banking System**: Players accumulate credits via passive gains or kills to spend on bounties, bets, or pazaak.
-* **Pazaak (Casino)**: A card game where players can `!hit` or `!stand` against a dealer, featuring a **3x payout** for hitting exactly 20.
-* **Bounty & Bet Systems**: Place bounties on rivals or bet on allies; successful kills collect these pots and announce payouts to the server.
-* **Peer-to-Peer Transfers**: The `!pay` command allows players to transfer credits directly to one another.
+* **Banking System**: Credits are stored in the SQLite `players.db`. Players earn a `passive_credit_gain` on every kill.
+* **Pazaak (Casino)**: A fully functional !pazaak game with `!hit` and `!stand` commands. Features a **3x** payout for hitting exactly 20 and a persistent **Dealer Pot**.
+* **Bounty & Bet Systems**: Contributors can pool credits onto a target's head. The `process_kill` logic automatically sums the dictionary and awards the total to the victor.
+* **Peer-to-Peer Transfers**: Validated `!pay` transfers allow players to move capital between accounts safely.
 
 ### 4. Advanced Combat Logic
-* **Force Surge**: A rare (5%) chance on any kill to trigger a "Force Surge," granting the killer **3x XP**
-* **Nemesis System**: Tracks "dominance" by announcing when one player kills another three times in a row
-* **Global Kill Feed**: Replaces standard messages with high-visibility RCON announcements showing titles, XP gains, and credit rewards
+
+* **Killing Spree System**: Tracks consecutive kills without dying. Triggers global server announcements at 5 (Killing Spree), 10 (Unstoppable), and 15 (Godlike) kills.
+* **Nemesis & Revenge**: Tracks "dominance" (3+ kills in a row). Breaking a Nemesis cycle grants a +200cr Revenge Bonus and resets the feud.
+* **Force Surge**: A 5% chance on any kill to trigger a surge, granting 3x XP.
+* **Wealth Redistribution (Theft)**: Killing a "Wealthy" player (over 5,000cr) automatically steals 5% of their credits for the killer.
+* **Bank Heist**: A rare 1% chance to "crack the House Vault," stealing 20% of the Pazaak Dealer's credits.
 
 ### 5. Persistent Infrastructure
-* **Shared Database**: SQLite Database: Migrated from JSON to players.db. It uses clean_name (normalized via unicodedata) as the PRIMARY KEY to ensure players keep their stats regardless of name symbols or color codes.
-* **Name-Based Syncing**: The sync_current_players function uses a Regex anchor `r'^\s*(\d+)\s+-?\d+\s+\d+\s+(.*?)\s+\d+\s+\d{1,3}\.\d'` to correctly parse names even if they contain spaces or ASCII symbols.
-* **Multi-Server Ready**: Designed for multi-port environments. Every database connection uses timeout=20 to prevent "Database is locked" errors when two or more server ports write to the shared players.db simultaneously.
+
+* **IP-Based Record Syncing**: The database now tracks `last_ip`. If a player changes their name, the script recognizes their IP and automatically re-links their XP, credits, and titles to the new name.
+* **SQLite Backend**: Migrated to `players.db` using `clean_name` as a primary key. This ensures data persistence across name changes and server restarts.
+* **Multi-Port Ready**: Uses `timeout=20` and `conn.commit()` logic to allow multiple server instances (different ports) to read and write to the same database file without corruption or locking issues.
+* **Robust Regex Parsing**: Captures Slot ID, Name, and IP simultaneously to ensure the script always knows exactly who is on the server at any given second.
 
 ---
 

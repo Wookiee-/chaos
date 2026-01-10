@@ -112,21 +112,22 @@ class MBIIChaosPlugin:
         self.init_sqlite()
 
     def init_sqlite(self):
-            with sqlite3.connect(self.db_filename, timeout=20) as conn:
-                cursor = conn.cursor()
-                cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS players (
-                        name TEXT,
-                        clean_name TEXT PRIMARY KEY,
-                        xp INTEGER DEFAULT 0,
-                        credits INTEGER DEFAULT 0,
-                        kills INTEGER DEFAULT 0,
-                        deaths INTEGER DEFAULT 0,
-                        career TEXT DEFAULT 'Jedi Pup',
-                        faction TEXT DEFAULT 'jedi'
-                    )
-                ''')
-                conn.commit()
+        with sqlite3.connect(self.db_filename, timeout=20) as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS players (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT,
+                    clean_name TEXT UNIQUE,
+                    last_ip TEXT,
+                    xp INTEGER DEFAULT 0,
+                    credits INTEGER DEFAULT 100,
+                    kills INTEGER DEFAULT 0,
+                    deaths INTEGER DEFAULT 0,
+                    faction TEXT DEFAULT 'jedi'
+                )
+            ''')
+            conn.commit()
 
     def load_config(self):
         config = configparser.ConfigParser()
@@ -144,26 +145,42 @@ class MBIIChaosPlugin:
         db_name = self.settings.get('db_file', 'players.db')
         self.db_filename = os.path.join(base_dir, db_name)
 
-    def sync_player(self, sid, raw_name):
+    def sync_player(self, sid, raw_name, ip="0.0.0.0"):
         clean = normalize(raw_name)
         with sqlite3.connect(self.db_filename, timeout=20) as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT xp, kills, deaths, faction, credits FROM players WHERE clean_name = ?", (clean,))
+            
+            # 1. Try to find by name first
+            cursor.execute("SELECT xp, kills, deaths, faction, credits, last_ip FROM players WHERE clean_name = ?", (clean,))
             data = cursor.fetchone()
             
             if data:
-                xp, kills, deaths, faction, credits = data
+                xp, kills, deaths, faction, credits, last_ip = data
+                # Keep IP address fresh
+                if ip != last_ip:
+                    cursor.execute("UPDATE players SET last_ip = ? WHERE clean_name = ?", (ip, clean))
+                    conn.commit()
             else:
-                xp, kills, deaths, faction, credits = 0, 0, 0, "jedi", 100
-                cursor.execute("INSERT INTO players (name, clean_name, xp, kills, deaths, faction, credits) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                               (raw_name, clean, xp, kills, deaths, faction, credits))
-                conn.commit()
+                # 2. NAME MISSED: Check if this IP is already in our database
+                cursor.execute("SELECT name, xp, kills, deaths, faction, credits FROM players WHERE last_ip = ?", (ip,))
+                alt_data = cursor.fetchone()
                 
-        # Remove old instance if exists in memory
-        self.players = [p for p in self.players if normalize(p.name) != clean]
+                if alt_data:
+                    old_name, xp, kills, deaths, faction, credits = alt_data
+                    # IP MATCH: Update the existing record with the new name
+                    cursor.execute("UPDATE players SET name = ?, clean_name = ? WHERE last_ip = ?", (raw_name, clean, ip))
+                    conn.commit()
+                else:
+                    # 3. TRULY NEW: No name match and no IP match
+                    xp, kills, deaths, faction, credits = 0, 0, 0, "jedi", 100
+                    cursor.execute("INSERT INTO players (name, clean_name, last_ip, xp, kills, deaths, faction, credits) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                                   (raw_name, clean, ip, xp, kills, deaths, faction, credits))
+                    conn.commit()
         
-        # Match Player class arguments: (sid, name, xp, kills, deaths, faction, credits, config)
+        # Remove duplicates from memory and create player object
+        self.players = [p for p in self.players if normalize(p.name) != clean]
         p = Player(sid, raw_name, xp, kills, deaths, faction, credits, self.settings)
+        p.ip = ip 
         self.players.append(p)
         return p
 
@@ -216,50 +233,40 @@ class MBIIChaosPlugin:
         active_sids = []
 
         for line in lines:
-            # This Regex finds:
-            # 1. The SID (starts with a digit)
-            # 2. Skips Score and Ping
-            # 3. Captures EVERYTHING until it sees something that looks like an IP (x.x.x.x:port)
-            match = re.search(r'^\s*(\d+)\s+-?\d+\s+\d+\s+(.*?)\s+\d+\s+\d{1,3}\.\d', line)
+            # Captures Group 1: SID | Group 2: Name | Group 3: IP
+            match = re.search(r'^\s*(\d+)\s+-?\d+\s+\d+\s+(.*?)\s+\d+\s+(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})', line)
             
             if match:
                 try:
                     sid = int(match.group(1))
                     raw_name = match.group(2).strip()
+                    ip = match.group(3) # Captured IP
                     
-                    # Cleanup MBII trailing ^7 artifact
                     if raw_name.endswith("^7"):
                         raw_name = raw_name[:-2].strip()
                     
                     active_sids.append(sid)
                     norm_name = normalize(raw_name)
 
-                    # Find or Create using the SQLite-safe method
                     p = next((x for x in self.players if normalize(x.name) == norm_name), None)
                     if p:
                         p.id = sid
+                        if hasattr(p, 'ip'): p.ip = ip
                     else:
-                        # This now hits the SQL database instead of a JSON list
-                        self.sync_player(sid, raw_name)
+                        # Now passes the IP to the database sync logic
+                        self.sync_player(sid, raw_name, ip)
                         
                 except Exception as e:
-                    print(f"[!] Error parsing ASCII name: {e}")
+                    print(f"[!] Error parsing player: {e}")
 
-        # --- Cleanup Logic (Same as your provided code) ---
+        # --- Cleanup Logic (Disconnected Players) ---
         for p_mem in self.players[:]:
-            # Check if they are actually in the status response
-            still_here = any(line.strip().startswith(f"{p_mem.id} ") for line in lines)
-            
-            if not still_here:
-                # Handle bounty refunds/cleanup
-                total_bounty = sum(p_mem.bounty.values()) if hasattr(p_mem, 'bounty') and isinstance(p_mem.bounty, dict) else 0
+            if p_mem.id not in active_sids:
+                total_bounty = sum(p_mem.bounty.values()) if isinstance(p_mem.bounty, dict) else 0
                 if total_bounty > 0:
-                    print(f"[*] Clearing {total_bounty}cr bounty from {p_mem.name} (Left)")
-                    p_mem.bounty = {}
+                    p_mem.bounty = {} # Clear bounty for players who left
                 
-                self.players.remove(p_mem)
-        
-        # In SQLite mode, we don't need self.save_db() here because sync_player saves individually!     
+                self.players.remove(p_mem)   
 
     def check_rank_change(self, player, old_level):
         new_level = player.level
@@ -320,14 +327,55 @@ class MBIIChaosPlugin:
                 old_lvl_k = killer.level
                 xp_gain = int(self.settings.get('xp_per_kill', 50))
                 cred_gain = int(self.settings.get('passive_credit_gain', 10))
-                
-                # Force Surge (Random Bonus)
+                bonus_str = ""
+
+                # --- 1. FORCE SURGE (5% Chance) ---
                 mult = 3 if random.random() < 0.05 else 1
-                if mult > 1: self.send_rcon(f'say "^3FORCE SURGE: ^7{killer.name} tapped into the Force for ^23x XP^7!"')
+                if mult > 1: 
+                    self.send_rcon(f'say "^3FORCE SURGE: ^7{killer.name} tapped into the Force for ^23x XP^7!"')
                 
+                # --- 2. REVENGE SYSTEM ---
+                # If the victim was dominating the killer, grant revenge bonus
+                if killer.name in victim.nemesis_map and victim.nemesis_map[killer.name] >= 3:
+                    revenge_bonus = 200
+                    killer.credits += revenge_bonus
+                    victim.nemesis_map[killer.name] = 0 # Break the dominance
+                    bonus_str += f" ^5[REVENGE +{revenge_bonus}cr]"
+
+                # --- 3. THEFT (Wealth Redistribution) ---
+                # If victim is rich (>5000cr), killer steals 5%
+                if victim.credits > 5000:
+                    stolen = int(victim.credits * 0.05)
+                    victim.credits -= stolen
+                    killer.credits += stolen
+                    bonus_str += f" ^1[STOLE {stolen}cr]"
+
+                # --- 4. BANK HEIST (1% Rare Event) ---
+                if random.random() < 0.01 and self.dealer_credits > 100:
+                    heist = int(self.dealer_credits * 0.20) # 20% of pazaak pool
+                    self.dealer_credits -= heist
+                    killer.credits += heist
+                    self.send_rcon(f'say "^3HEIST: ^7{killer.name} cracked the House Vault for ^2{heist}cr^7!"')
+
+                # --- 5. KILLING SPREE SYSTEM ---
+                killer.kills += 1
+                killer.streak += 1
+                if killer.streak == 5:
+                    self.send_rcon(f'say "^2SPREE: ^7{killer.name} is on a ^1Killing Spree^7!"')
+                elif killer.streak == 10:
+                    self.send_rcon(f'say "^2SPREE: ^7{killer.name} is ^1UNSTOPPABLE^7!"')
+                elif killer.streak == 15:
+                    self.send_rcon(f'say "^2SPREE: ^7{killer.name} is ^1GODLIKE^7!"')
+
+                # --- 6. NEMESIS TRACKING ---
+                killer.nemesis_map[victim.name] = killer.nemesis_map.get(victim.name, 0) + 1
+                if killer.nemesis_map[victim.name] == 3:
+                    self.send_rcon(f'say "^1NEMESIS: ^7{killer.name} is dominating {victim.name}!"')
+
+                # Update XP and base credits
                 killer.xp += (xp_gain * mult)
                 
-                # --- Payout Logic ---
+                # --- Payout Logic (Bounties & Bets) ---
                 b_reward = 0
                 if isinstance(victim.bounty, dict) and victim.bounty:
                     b_reward = sum(victim.bounty.values())
@@ -339,26 +387,21 @@ class MBIIChaosPlugin:
                     bet_reward = (sum(bet_data.values()) if isinstance(bet_data, dict) else int(bet_data)) * 2
                 
                 if victim.id in self.active_bets:
-                    self.active_bets.pop(victim.id) # Victim lost their bet
+                    self.active_bets.pop(victim.id) 
                 
                 killer.credits += (cred_gain + b_reward + bet_reward)
-                killer.kills += 1
-                killer.streak += 1
-                
-                # Nemesis System
-                killer.nemesis_map[victim.name] = killer.nemesis_map.get(victim.name, 0) + 1
-                if killer.nemesis_map[victim.name] == 3:
-                    self.send_rcon(f'say "^1NEMESIS: ^7{killer.name} is dominating {victim.name}!"')
 
-                # Announcement
-                payout_str = f" & secured ^3{b_reward + bet_reward}cr^7" if (b_reward + bet_reward) > 0 else ""
+                # --- Final Announcement ---
+                payout_val = b_reward + bet_reward
+                payout_str = f" & secured ^3{payout_val}cr^7" if payout_val > 0 else ""
                 k_title = killer.get_title(self.current_server_mode)
                 v_title = victim.get_title(self.current_server_mode)
                 
-                self.send_rcon(f'say "{k_title} ^2{killer.name} ^7defeated {v_title} ^1{victim.name} ^3(+{xp_gain * mult} XP){payout_str} {loss_str}"')
+                self.send_rcon(f'say "{k_title} ^2{killer.name} ^7defeated {v_title} ^1{victim.name} ^3(+{xp_gain * mult} XP){payout_str} {loss_str}{bonus_str}"')
                 
                 self.check_rank_change(killer, old_lvl_k)
-                self.save_player_stat(killer) # Update DB immediately
+                self.save_player_stat(killer)
+                self.save_player_stat(victim) # Save victim credits if they were robbed
 
     def play_pazaak(self, p, amount):
         if p.credits < amount:
