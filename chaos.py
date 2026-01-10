@@ -145,56 +145,46 @@ class MBIIChaosPlugin:
         self.db_filename = os.path.join(base_dir, db_name)
 
     def sync_player(self, sid, raw_name, ip="0.0.0.0"):
-        clean = normalize(raw_name)
+        # We still clean the name for display purposes (!top, !rank)
         display_name = re.sub(r'\^.', '', raw_name).replace('[', '').replace(']', '').strip()
+        clean = normalize(raw_name)
         
-        # Default stats for new players
+        # Default stats for a brand new IP
         xp, kills, deaths, faction, credits = 0, 0, 0, "jedi", 100
         
         with sqlite3.connect(self.db_filename, timeout=20) as conn:
             cursor = conn.cursor()
             
-            # 1. Try to find by clean_name first
-            cursor.execute("SELECT xp, kills, deaths, faction, credits, last_ip FROM players WHERE clean_name = ?", (clean,))
+            # --- THE IP-ONLY LOOKUP ---
+            # We don't care if the name is Padawan, Padawan[1], or Valzhar.
+            # If the IP matches, it's the same human.
+            cursor.execute("SELECT clean_name, xp, kills, deaths, faction, credits FROM players WHERE last_ip = ?", (ip,))
             data = cursor.fetchone()
             
             if data:
-                xp, kills, deaths, faction, credits, last_ip = data
-                cursor.execute("UPDATE players SET name = ?, last_ip = ? WHERE clean_name = ?", (display_name, ip, clean))
+                # Found existing user by IP
+                db_clean, xp, kills, deaths, faction, credits = data
+                
+                # Update their name in the DB just so !top shows their current choice
+                cursor.execute("UPDATE players SET name = ?, clean_name = ? WHERE last_ip = ?", (display_name, clean, ip))
                 conn.commit()
             else:
-                # 2. Check if IP exists
-                cursor.execute("SELECT clean_name, xp, kills, deaths, faction, credits FROM players WHERE last_ip = ?", (ip,))
-                alt_data = cursor.fetchone()
-                
-                if alt_data:
-                    old_clean_name, xp, kills, deaths, faction, credits = alt_data
-                    try:
-                        cursor.execute("UPDATE players SET name = ?, clean_name = ? WHERE last_ip = ?", (display_name, clean, ip))
-                        conn.commit()
-                    except sqlite3.IntegrityError:
-                        # FALLBACK: If name taken, re-fetch that specific name
-                        cursor.execute("SELECT xp, kills, deaths, faction, credits FROM players WHERE clean_name = ?", (clean,))
-                        fallback = cursor.fetchone()
-                        if fallback:
-                            xp, kills, deaths, faction, credits = fallback
-                else:
-                    # 3. Truly new player
-                    try:
-                        cursor.execute("INSERT INTO players (name, clean_name, last_ip, xp, kills, deaths, faction, credits) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                                       (display_name, clean, ip, xp, kills, deaths, faction, credits))
-                        conn.commit()
-                    except sqlite3.IntegrityError:
-                        # If insert fails, last ditch effort to get stats
-                        cursor.execute("SELECT xp, kills, deaths, faction, credits FROM players WHERE clean_name = ?", (clean,))
-                        fallback = cursor.fetchone()
-                        if fallback:
-                            xp, kills, deaths, faction, credits = fallback
+                # Truly a new IP (New Player)
+                try:
+                    cursor.execute("INSERT INTO players (name, clean_name, last_ip, xp, kills, deaths, faction, credits) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                                   (display_name, clean, ip, xp, kills, deaths, faction, credits))
+                    conn.commit()
+                except sqlite3.IntegrityError:
+                    # If this name is already taken by ANOTHER IP, we let it slide 
+                    # by giving this new IP its own entry with a slightly unique clean_name
+                    unique_clean = f"{clean}_{int(time.time())}"
+                    cursor.execute("INSERT INTO players (name, clean_name, last_ip, xp, kills, deaths, faction, credits) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                                   (display_name, unique_clean, ip, xp, kills, deaths, faction, credits))
+                    conn.commit()
 
-        # Cleanup memory
-        self.players = [p for p in self.players if p.id != sid and normalize(p.name) != clean]
+        # Update Memory: Remove the old slot data to make room for the fresh sync
+        self.players = [p for p in self.players if p.id != sid]
         
-        # Create object
         p = Player(sid, display_name, xp, kills, deaths, faction, credits, self.settings)
         p.raw_name = raw_name
         p.ip = ip 
