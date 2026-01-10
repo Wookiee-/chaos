@@ -547,10 +547,10 @@ class MBIIChaosPlugin:
                 self.send_rcon(f'say "^6PAZAAK! ^5{p.name} ^7hit ^220 ^7and wins ^3{win}cr ^2(3x Payout)!"')
                 del self.active_pazaak[p.name]
             elif game["score"] > 20:
-                self.send_rcon(f'say "^7{p.name} ^1BUSTED ^7with ^1{game["score"]}!"')
+                self.send_rcon(f'say "^7{p.name} ^1BUSTED ^7with ^1{game["score"]}!. ^7Dealer Pot is now ^3{self.dealer_credits}^3cr^7."')
                 del self.active_pazaak[p.name]
             else:
-                self.send_rcon(f'say "^5[PAZAAK] ^7{p.name} ^7draws {card}. ^7Total: ^2{game["score"]}"')
+                self.send_rcon(f'svtell {p.id} "^5[PAZAAK] ^7{p.name} ^7draws {card}. ^7Total: ^2{game["score"]}"')
             self.save_player_stat(p)
         elif msg == "!stand" and p.name in self.active_pazaak:
             game = self.active_pazaak[p.name]
