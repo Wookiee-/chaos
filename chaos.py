@@ -31,6 +31,7 @@ class Player:
         self.nemesis_map = {} 
         self.xp_per_lvl = int(config['xp_per_level'])
         self.dealer_credits = 0
+        self.side_deck = [random.randint(-5, 5) for _ in range(4)]
 
     @property
     def level(self):
@@ -541,10 +542,12 @@ class MBIIChaosPlugin:
 
         elif msg == "!help" or msg == "!commands":        
             self.send_rcon(f'svtell {p.id} "^5--- CHAOS COMMANDS ---"')
-            self.send_rcon(f'svtell {p.id} "^3Personal: ^7!rank, !stats, !bank, !title !level"')
-            self.send_rcon(f'svtell {p.id} "^3Economy: ^7!pay <name> <amt>, !wealth, !top" !vault !house')
+            self.send_rcon(f'svtell {p.id} "^3Personal: ^7!rank, !level, !stats, !bank, !title"')
+            self.send_rcon(f'svtell {p.id} "^3Economy: ^7!pay <name> <amt>, !wealth, !top, !vault"')
             self.send_rcon(f'svtell {p.id} "^3Gambling: ^7!pazaak <amt>, !bet <name> <amt>, !bounty <name> <amt>"')
-            self.send_rcon(f'svtell {p.id} "^2Pazaak Info: ^7Hit 20 for 3x Payout!"')
+            self.send_rcon(f'svtell {p.id} "^3Pazaak: ^7!hit, !stand, !side (View/Play modifier cards)"')
+            self.send_rcon(f'svtell {p.id} "^2Jackpot: ^7Type ^2!vault ^7to see the bonus pot you win by beating the House!"')
+            self.send_rcon(f'svtell {p.id} "^2Pazaak Win: ^7Hit 20 for 3x Payout | Beat Dealer to win Vault!"')
         # Check for the command without a space first, or the command with a space
         elif msg == "!pazaak" or msg.startswith("!pazaak "):
             parts = msg.split()
@@ -569,6 +572,8 @@ class MBIIChaosPlugin:
                 self.send_rcon(f'say "^6PAZAAK! ^5{p.name} ^7hit ^220 ^7and wins ^3{win}cr ^2(3x Payout)!"')
                 del self.active_pazaak[p.name]
             elif game["score"] > 20:
+                remaining_bet = game["bet"] - int(game["bet"] * 0.1)
+                self.dealer_credits += remaining_bet                
                 self.send_rcon(f'say "^7{p.name} ^1BUSTED ^7with ^1{game["score"]}!. ^7Dealer Pot is now ^3{self.dealer_credits}^3cr^7."')
                 del self.active_pazaak[p.name]
             else:
@@ -582,22 +587,59 @@ class MBIIChaosPlugin:
             self.send_rcon(f'say "^5[PAZAAK] ^7{p.name}(^2{game["score"]}^7) vs Dealer(^1{dealer_hand}^7)"')
             
             if game["score"] > dealer_hand:
-                # Player Wins: Double bet + Dealer's accumulated pool
+                # Player Wins: Double bet + Dealer's current accumulated pool
                 bonus = self.dealer_credits
                 win = (game["bet"] * 2) + bonus
                 p.credits += win
+                self.dealer_credits = 0 
                 self.send_rcon(f'say "^2WIN! ^7{p.name} beat the house and took the ^3{bonus}cr ^7bonus pot! Total: ^3{win}cr^7!"')
-                self.dealer_credits = 0 # Reset the pot after a win
+            
             elif game["score"] == dealer_hand:
                 p.credits += game["bet"]
-                self.send_rcon(f'say "^3PUSH! ^7Scores tied at {dealer_hand}. Bet returned."')
+                tax_refund = int(game["bet"] * 0.1)
+                self.dealer_credits = max(0, self.dealer_credits - tax_refund)
+                self.send_rcon(f'say "^3PUSH! ^7Scores tied at {dealer_hand}. Bet returned."')       
             else:
-                # Player Loses: Their bet stays with the dealer, increasing the next winner's payout
-                self.dealer_credits += game["bet"]
-                self.send_rcon(f'say "^1LOSS! ^7The House wins. Dealer Pot is now ^3{self.dealer_credits}cr^7."')
-            
+                remaining_bet = game["bet"] - int(game["bet"] * 0.1)
+                self.dealer_credits += remaining_bet
+                self.send_rcon(f'say "^1LOSS! ^7The House wins. Dealer Pot is now ^3{self.dealer_credits}cr^7."')            
             del self.active_pazaak[p.name]
-            self.save_player_stat(p)     
+            self.save_player_stat(p)
+        elif msg.startswith("!side") and p.name in self.active_pazaak:
+            game = self.active_pazaak[p.name]
+            parts = msg.split(" ")
+            
+            # If they just type !side, show them their cards
+            if len(parts) < 2:
+                cards_str = ", ".join([f"^{ '2' if c > 0 else '1' }{c}^7" for c in p.side_deck])
+                self.send_rcon(f'svtell {p.id} "^5[SIDE DECK] ^7Your cards: {cards_str}"')
+                self.send_rcon(f'svtell {p.id} "^7Use: !side <card_value> (e.g., !side -2)"')
+                return
+
+            try:
+                card_val = int(parts[1])
+                if card_val in p.side_deck:
+                    # Apply modifier
+                    game["score"] += card_val
+                    p.side_deck.remove(card_val) # Use the card up
+                    
+                    self.send_rcon(f'say "^5[PAZAAK] ^7{p.name} played a ^3{card_val} ^7side card! New Total: ^2{game["score"]}^7"')
+                    
+                    # Add new card for next game session
+                    p.side_deck.append(random.randint(-5, 5))
+                    
+                    # Check for instant win (20)
+                    if game["score"] == 20:
+                        self.send_rcon(f'svtell {p.id} "^2PAZAAK! ^7You hit 20! Type ^2!stand ^7to claim the jackpot!"')
+                    elif game["score"] > 20:
+                        remaining_bet = game["bet"] - int(game["bet"] * 0.1)
+                        self.dealer_credits += remaining_bet
+                        self.send_rcon(f'say "^7{p.name} ^1BUSTED ^7after side card! Pot is ^3{self.dealer_credits}cr^7."')
+                        del self.active_pazaak[p.name]
+                else:
+                    self.send_rcon(f'svtell {p.id} "^1Error: ^7You don\'t have a {card_val} card!"')
+            except ValueError:
+                self.send_rcon(f'svtell {p.id} "^1Error: ^7Invalid card value."')         
         elif msg == "!rank": 
             display_title = p.get_title(self.current_server_mode)
             self.send_rcon(f'svtell {p.id} "^7{p.name}: {display_title} ^7| Lvl: ^2{p.level} ^7| XP: ^2{p.xp}"')
