@@ -6,7 +6,7 @@ The `chaos.py` script is a comprehensive RPG-style server management system for 
 ### 1. The Core Progression System
 * **20-Tier Career Paths**: There are 14 distinct career paths (7 Hero, 7 Villain), each containing 20 unique titles that evolve every 2.5 levels.
 * **Leveling & XP**: Players earn XP through kills and lose a configurable amount upon death. 
-* **"Protection"** prevents XP from dropping below zero.
+* **"Last Stand Protection"** prevents XP from dropping below zero.
 * **Dynamic Title Logic**: The `get_title` system automatically assigns colors (Cyan for Heroes, Red for Villains) and ranks based on the player's chosen faction and current level.
 * **JKA-Optimized UI**: Employs a specialized `/100` fraction display for the `!level` command to bypass the Quake 3 engine's percentage-sign (%) filter, ensuring 100% visibility in the game console.
 
