@@ -83,18 +83,21 @@ class Player:
 
     def get_progress_bar(self):
         # Ensure we don't divide by zero
-        if self.xp_per_lvl <= 0: return "[..........] 0%"
+        if self.xp_per_lvl <= 0: return "[..........] 0/100"
         
         # Calculate XP within the current level
         xp_into_level = self.xp % self.xp_per_lvl
-        percentage = min(xp_into_level / self.xp_per_lvl, 1.0)
+        percentage = min((1.0 * xp_into_level) / self.xp_per_lvl, 1.0)
         
         # 10-segment bar: I for filled, . for empty
         filled = int(percentage * 10)
         bar = "^2" + "I" * filled + "^7" + "." * (10 - filled)
         
         xp_left = self.xp_per_lvl - xp_into_level
-        return f"[{bar}^7] {int(percentage * 100)}% (^3{xp_left} XP left^7)"              
+        display_percent = int(percentage * 100)
+        
+        # Using /100 style to bypass the JKA % character filter
+        return f"[{bar}^7] ^2{display_percent}^7/100 (^3{xp_left} XP left^7)"              
 
 class MBIIChaosPlugin:
     def __init__(self):
