@@ -351,7 +351,7 @@ class MBIIChaosPlugin:
             loss_str = f"^1(-{loss} XP)"
         else:
             victim.xp = 0
-            loss_str = "^5[Last Stand Protection]"
+            loss_str = "^5(Last Stand Protection)"
         
         victim.deaths += 1
         victim.streak = 0
