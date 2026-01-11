@@ -544,10 +544,9 @@ class MBIIChaosPlugin:
             self.send_rcon(f'svtell {p.id} "^5--- CHAOS COMMANDS ---"')
             self.send_rcon(f'svtell {p.id} "^3Personal: ^7!rank, !level, !stats, !bank, !title"')
             self.send_rcon(f'svtell {p.id} "^3Economy: ^7!pay <name> <amt>, !wealth, !top, !vault"')
-            self.send_rcon(f'svtell {p.id} "^3Gambling: ^7!pazaak <amt>, !bet <name> <amt>, !bounty <name> <amt>"')
+            self.send_rcon(f'svtell {p.id} "^3Gambling: ^7!pazaak <amt>, !bet <name> <amt>, !bounty <name> <amt>, !bounties"')
             self.send_rcon(f'svtell {p.id} "^3Pazaak: ^7!hit, !stand, !side (View/Play modifier cards)"')
-            self.send_rcon(f'svtell {p.id} "^2Jackpot: ^7Type ^2!vault ^7to see the bonus pot you win by beating the House!"')
-            self.send_rcon(f'svtell {p.id} "^2Pazaak Win: ^7Hit 20 for 3x Payout | Beat Dealer to win Vault!"')
+            self.send_rcon(f'svtell {p.id} "^2Jackpot: ^7Beat the Dealer to win the ^3!vault ^7bonus!"')
         # Check for the command without a space first, or the command with a space
         elif msg == "!pazaak" or msg.startswith("!pazaak "):
             parts = msg.split()
