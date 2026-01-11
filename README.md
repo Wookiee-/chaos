@@ -44,15 +44,15 @@ The `chaos.py` script is a comprehensive RPG-style server management system for 
 ---
 
 ## 🛠️Game Commands
-| Command | Functional Parameters | Datapad Action |
-| :--- | :--- |
+| Command | Functional Parameters 
+| :--- | :--- 
 | **Identity** |
 | \`!stats\` / \`!rank\` | Access your Imperial Datapad (Dossier, Sector Rank, & Training). |
 | \`!title <name>,<career_name>\` | Select your career path (e.g., !title mando). Force-only in Duel. |
 | \`!bank\` | Query personal credit reserves. |
 | **Finance** |
 | \`!pay <name> <amt>\` | Authorize a secure credit transfer to another player. |
-| \`!top\` / !\`wealth\` | (Global),Display top-tier personnel (XP Leaderboard or Credit Rankings). |
+| \`!top\` / !\`wealth\` | Display top-tier personnel (XP Leaderboard or Credit Rankings). |
 | \`!vault\` | Check House Vault reserves (Monitors Heist potential). |
 | **Contracts** |
 | \`!bounty <name> <amt> | Issue a contract on a target's head. |
