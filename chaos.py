@@ -32,6 +32,7 @@ class Player:
         self.xp_per_lvl = int(config['xp_per_level'])
         self.dealer_credits = 0
         self.side_deck = [random.randint(-5, 5) for _ in range(4)]
+        self.is_top5 = False
 
         self.paths = {
             "rebel": ["Rebel Recruit", "Rebel Grunt", "Rebel Soldier", "Frontline Scout", "Corporal", "Sergeant", "Staff Sergeant", "Master Sergeant", "Lieutenant", "Captain", "Major", "Lt Colonel", "Colonel", "Brigadier", "General", "High General", "Alliance Hero", "Alliance Leader", "Rebel Legend", "Freedom Fighter"],
@@ -149,7 +150,7 @@ class MBIIChaosPlugin:
             return f"{rank}{suffix}", total
 
     def check_leaderboard_promotion(self, p):
-        """Checks if a player has recently entered the Top 5 and announces it."""
+        """Checks if a player has recently entered the Top 5 and announces it once."""
         with sqlite3.connect(self.db_filename) as conn:
             cursor = conn.cursor()
             # Get the XP of the person currently in 5th place
@@ -158,11 +159,17 @@ class MBIIChaosPlugin:
             
             if result:
                 fifth_place_xp = result[0]
-                # If player just passed the 5th place person
-                if p.xp >= fifth_place_xp and (p.xp - 100) < fifth_place_xp: 
-                    # The (xp - 100) check ensures it only announces the MOMENT they pass them
-                    self.send_rcon(f'say "^5[NETWORK ALERT] ^7{p.name} ^7has broken into the ^2TOP 5 ^7Leaderboard!"')
-                    self.send_rcon(f'say "^3New Rank: ^7{p.get_title(self.current_server_mode)}"')                
+                
+                # If they have enough XP to be in the Top 5
+                if p.xp >= fifth_place_xp:
+                    # ONLY announce if they weren't already marked as being in the Top 5
+                    if not p.is_top5:
+                        self.send_rcon(f'say "^5[NETWORK ALERT] ^7{p.name} ^7has broken into the ^2TOP 5 ^7Leaderboard!"')
+                        self.send_rcon(f'say "^3New Rank: ^7{p.get_title(self.current_server_mode)}"')
+                        p.is_top5 = True  # Mark them so it doesn't spam
+                else:
+                    # If they fall out of the top 5, reset the flag so they can be announced again if they reclaim it
+                    p.is_top5 = False               
 
     def load_config(self):
         config = configparser.ConfigParser()
