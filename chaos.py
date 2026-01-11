@@ -31,9 +31,6 @@ class Player:
         self.nemesis_map = {} 
         self.xp_per_lvl = int(config['xp_per_level'])
         self.dealer_credits = 0
-        self.active_deathrolls = {} # NEW: Tracks PvP roll states  
-        self.sarlacc_pot = 0        # NEW: Lottery pool
-        self.sarlacc_entrants = []  # NEW: List of entrants
         self.side_deck = [random.randint(-5, 5) for _ in range(4)]
 
         self.paths = {
@@ -110,7 +107,10 @@ class MBIIChaosPlugin:
         self.current_server_mode = 0
         self.active_bets = {}
         self.active_pazaak = {} # NEW: Tracks active card games
-        self.dealer_credits = 0  
+        self.dealer_credits = 0 
+        self.sarlacc_pot = 0         
+        self.sarlacc_entrants = []   
+        self.active_deathrolls = {}
         self.init_sqlite()
         self.last_sync_time = 0
 
@@ -1180,8 +1180,10 @@ class MBIIChaosPlugin:
             time.sleep(0.2)
 
 if __name__ == "__main__":
-    try:
-        MBIIChaosPlugin().run()
-    except Exception as e:
-        print(f"FATAL ERROR: {e}")
-        time.sleep(10)
+    while True:
+        try:
+            MBIIChaosPlugin().run()
+        except Exception as e:
+            print(f"CRASH DETECTED: {e}")
+            print("Restarting plugin in 5 seconds...")
+            time.sleep(5)
