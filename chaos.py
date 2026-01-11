@@ -831,20 +831,39 @@ class MBIIChaosPlugin:
                 self.send_rcon(f'say "^1LOSS! ^7{c2} was not {guess}er than {c1}. ^1-{amt}cr!"')
             self.save_player_stat(p)
 
-        elif msg == "!holo" or msg == "!slot":
+        elif msg == "!holo" or msg == "!slot" or msg.startswith("!holo ") or msg.startswith("!slot "):
+            parts = msg.split(" ")
             cost = 150
-            if p.credits < cost: return
+
+            # 1. Provide info if they don't use the 'spin' argument
+            if len(parts) < 2 or parts[1].lower() != "spin":
+                self.send_rcon(f'svtell {p.id} "^5--- HOLO-SLOTS TERMINAL ---"')
+                self.send_rcon(f'svtell {p.id} "^7Cost per spin: ^3{cost}cr"')
+                self.send_rcon(f'svtell {p.id} "^7Prizes: 3-match (^3500^7), 4-match (^32500^7), 5-match (^310k^7)"')
+                self.send_rcon(f'svtell {p.id} "^2Usage: ^3!holo spin ^7to play."')
+                return
+
+            # 2. Check credits
+            if p.credits < cost:
+                self.send_rcon(f'svtell {p.id} "^1Error: ^7You need ^3{cost}cr ^7to spin the reels."')
+                return
+
+            # 3. Process the spin
             p.credits -= cost
             icons = ["^1Sith", "^5Jedi", "^3Gold", "^2Boba", "^4Droid", "^6Star"]
             reels = [random.choice(icons) for _ in range(5)]
+            
+            # Display the result
             self.send_rcon(f'svtell {p.id} "^5[SLOTS] ^7| {reels[0]} ^7| {reels[1]} ^7| {reels[2]} ^7| {reels[3]} ^7| {reels[4]} ^7|"')
             
+            # 4. Calculate matches (Consecutive from left to right)
             match_count = 1
             first = reels[0]
             for i in range(1, 5):
                 if reels[i] == first: match_count += 1
                 else: break
 
+            # 5. Payout Logic
             win = 0
             if match_count == 5:
                 win = 10000
@@ -856,15 +875,18 @@ class MBIIChaosPlugin:
                 win = 500
                 self.send_rcon(f'svtell {p.id} "^2WIN! ^7Matched 3: ^3500cr^7!"')
 
+            # 6. Bonus Multiplier (10% chance on any win)
             if win > 0:
-                if random.randint(1, 10) == 1: # 10% Bonus Chance
+                if random.randint(1, 10) == 1:
                     mult = random.randint(2, 5)
                     win *= mult
-                    self.send_rcon(f'say "^3BONUS! ^7x{mult} multiplier! Total: ^3{win}cr^7!"')
+                    self.send_rcon(f'say "^3BONUS! ^7{p.name} triggered a ^2x{mult} ^7multiplier! Total: ^3{win}cr^7!"')
                 p.credits += win
             else:
+                # Add 10% of lost bet to the House Vault for heists
                 self.dealer_credits += int(cost * 0.1)
-            self.save_player_stat(p)                         
+
+            self.save_player_stat(p)                        
         elif msg == "!stats" or msg == "!rank":
             rank_str, total = self.get_player_rank(p)
             title = p.get_title(self.current_server_mode)
