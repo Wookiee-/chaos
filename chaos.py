@@ -31,7 +31,27 @@ class Player:
         self.nemesis_map = {} 
         self.xp_per_lvl = int(config['xp_per_level'])
         self.dealer_credits = 0
+        self.active_deathrolls = {} # NEW: Tracks PvP roll states  
+        self.sarlacc_pot = 0        # NEW: Lottery pool
+        self.sarlacc_entrants = []  # NEW: List of entrants
         self.side_deck = [random.randint(-5, 5) for _ in range(4)]
+
+        self.paths = {
+            "rebel": ["Rebel Recruit", "Rebel Grunt", "Rebel Soldier", "Frontline Scout", "Corporal", "Sergeant", "Staff Sergeant", "Master Sergeant", "Lieutenant", "Captain", "Major", "Lt Colonel", "Colonel", "Brigadier", "General", "High General", "Alliance Hero", "Alliance Leader", "Rebel Legend", "Freedom Fighter"],
+            "elitetrooper": ["SpecOps Trainee", "Infiltrator", "Elite Trooper", "Commando", "Vanguard", "Specialist", "Elite Scout", "Pathfinder", "Saboteur", "Heavy Gunner", "Demolitions", "Marksman", "Elite Sergeant", "Elite Captain", "SpecOps Lead", "Elite Commander", "Tactical Lead", "Shadow Trooper", "Elite Legend", "Prime Commando"],
+            "clonetrooper": ["Clone Shiny", "Clone Trooper", "Clone Private", "Clone Corporal", "Clone Sergeant", "Clone Lieutenant", "Clone Captain", "Clone Major", "Clone Commander", "Marshal Commander", "Regiment Lead", "Legion Commander", "Veteran Clone", "Frontline Clone", "Clone Hero", "Clone Specialist", "Tactical Clone", "Clone Guard", "Clone Legend", "Prime Clone"],
+            "arctrooper": ["ARC Cadet", "ARC Trainee", "ARC Private", "ARC Trooper", "ARC Veteran", "ARC Scout", "ARC Sniper", "ARC Heavy", "ARC Sergeant", "ARC Lieutenant", "ARC Captain", "ARC Commander", "ARC Lead", "ARC Specialist", "Alpha Class", "Null Class", "ARC Hero", "ARC Legend", "Prime ARC", "ARC Overlord"],
+            "hero": ["Hopeful", "Protector", "Defender", "Guardian", "Peacekeeper", "Champion", "Hero", "Veteran Hero", "Noble Hero", "Valiant Hero", "Bold Hero", "Renowned Hero", "Great Hero", "Grand Hero", "Galactic Hero", "Epic Hero", "Legendary Hero", "Mythic Hero", "Hero Legend", "Galactic Savior"],
+            "wookiee": ["Wookiee Pup", "Wookiee Youth", "Wookiee Scout", "Wookiee Trainee", "Wookiee Warrior", "Wookiee Guard", "Wookiee Defender", "Wookiee Hunter", "Wookiee Tracker", "Wookiee Veteran", "Wookiee Berserker", "Wookiee Strongman", "Wookiee Brawler", "Wookiee Leader", "Wookiee Elder", "Wookiee Chieftain", "Forest Master", "Kashyyyk Hero", "Wookiee Legend", "The Great Bark"],
+            "imperial": ["Imp Recruit", "Imp Trooper", "Imp Soldier", "Imp Guard", "Imp Corporal", "Imp Sergeant", "Staff Sergeant", "Master Sergeant", "Imp Lieutenant", "Imp Captain", "Imp Major", "Imp Colonel", "High Colonel", "Imp General", "High General", "Grand General", "Imperial Hero", "Imperial Leader", "Imperial Legend", "Empire's Hand"],
+            "commander": ["Imp Cadet", "Imp Officer", "Field Officer", "Tactical Officer", "Lieutenant", "Flight Officer", "Staff Officer", "Captain", "Commander", "High Commander", "Major", "Lt Colonel", "Colonel", "Brigadier", "General", "Grand General", "Admiral", "Fleet Admiral", "Grand Admiral", "Supreme Commander"],
+            "bountyhunter": ["Novice Hunter", "Amateur Hunter", "Contractor", "Tracker", "Enforcer", "Assassin", "Mercenary", "Bounty Hunter", "Professional Hunter", "Veteran Hunter", "Elite Hunter", "Master Hunter", "Notorious Hunter", "Famed Hunter", "Legendary Hunter", "Grand Hunter", "Prime Hunter", "Guild Master", "Hunter Legend", "The Ultimate Prize"],
+            "mandalorian": ["Foundling", "Acolyte", "Initiate", "Mando Trainee", "Mando Warrior", "Mando Soldier", "Mando Guard", "Mando Veteran", "Mando Scout", "Mando Sniper", "Mando Heavy", "Clan Member", "Clan Guard", "Clan Leader", "House Leader", "Mando Hero", "Mando Commander", "The Armorer", "Mando Legend", "The Mandalore"],
+            "droideka": ["Mk I Unit", "Mk II Unit", "Mk III Unit", "Drone", "Sentinel", "Guard", "Droideka", "Advanced Deka", "Elite Deka", "Heavy Deka", "Shield Deka", "Rapid Deka", "Sniper Deka", "Veteran Deka", "Droideka Master", "Droideka Prime", "Droideka Lead", "Droideka Ace", "Destroyer Prime", "The Rolling Death"],
+            "sbd": ["B2 Unit", "B2 Grunt", "B2 Soldier", "B2 Guard", "B2 Trooper", "B2 Veteran", "B2 Elite", "B2 Specialist", "B2 Sniper", "B2 Heavy", "B2 Commando", "B2 Captain", "B2 Commander", "B2 Lead", "B2 Hero", "B2 Prime", "B2 Ace", "B2 Master", "B2 Legend", "Iron Will"],
+            "jedi": ["Youngling", "Padawan", "Initiate", "Apprentice", "Service Corps", "Jedi Knight", "Jedi Hero", "Guardian", "Consular", "Sentinel", "Investigator", "Jedi Master", "Council Member", "Master of the Order", "Grand Master", "Force Spirit", "Force Entity", "The Chosen One", "Whill Overseer", "Jedi Legend"],
+            "sith": ["Hopeful", "Acolyte", "Initiate", "Apprentice", "Neophyte", "Adept", "Soldier", "Warrior", "Marauder", "Assassin", "Executioner", "Champion", "Inquisitor", "Lord", "High Lord", "Darth", "Dark Councilor", "Sorcerer", "Overlord", "Sith Emperor"]
+        }
 
     @property
     def level(self):
@@ -44,43 +64,20 @@ class Player:
         return round(self.kills / self.deaths, 2)
 
     def get_title(self, current_mode=0):
-        lvl = self.level
-        idx = int(min((lvl - 1) // 2.5, 19)) # Changes every 2.5 levels
-        
-        # Define the dictionary of 20-title paths
-        paths = {
-            "rebel": ["Rebel Recruit", "Rebel Grunt", "Rebel Soldier", "Frontline Scout", "Corporal", "Sergeant", "Staff Sergeant", "Master Sergeant", "Lieutenant", "Captain", "Major", "Lt Colonel", "Colonel", "Brigadier", "General", "High General", "Alliance Hero", "Alliance Leader", "Rebel Legend", "Freedom Fighter"],
-            "elitetrooper": ["SpecOps Trainee", "Infiltrator", "Elite Trooper", "Commando", "Vanguard", "Specialist", "Elite Scout", "Pathfinder", "Saboteur", "Heavy Gunner", "Demolitions", "Marksman", "Elite Sergeant", "Elite Captain", "SpecOps Lead", "Elite Commander", "Tactical Lead", "Shadow Trooper", "Elite Legend", "Prime Commando"],
-            "clonetrooper": ["Clone Shiny", "Clone Trooper", "Clone Private", "Clone Corporal", "Clone Sergeant", "Clone Lieutenant", "Clone Captain", "Clone Major", "Clone Commander", "Marshal Commander", "Regiment Lead", "Legion Commander", "Veteran Clone", "Frontline Clone", "Clone Hero", "Clone Specialist", "Tactical Clone", "Clone Guard", "Clone Legend", "Prime Clone"],
-            "arctrooper": ["ARC Cadet", "ARC Trainee", "ARC Private", "ARC Trooper", "ARC Veteran", "ARC Scout", "ARC Sniper", "ARC Heavy", "ARC Sergeant", "ARC Lieutenant", "ARC Captain", "ARC Commander", "ARC Lead", "ARC Specialist", "Alpha Class", "Null Class", "ARC Hero", "ARC Legend", "Prime ARC", "ARC Overlord"],
-            "hero": ["Hopeful", "Protector", "Defender", "Guardian", "Peacekeeper", "Champion", "Hero", "Veteran Hero", "Noble Hero", "Valiant Hero", "Bold Hero", "Renowned Hero", "Great Hero", "Grand Hero", "Galactic Hero", "Epic Hero", "Legendary Hero", "Mythic Hero", "Hero Legend", "Galactic Savior"],
-            "wookiee": ["Wookiee Pup", "Wookiee Youth", "Wookiee Scout", "Wookiee Trainee", "Wookiee Warrior", "Wookiee Guard", "Wookiee Defender", "Wookiee Hunter", "Wookiee Tracker", "Wookiee Veteran", "Wookiee Berserker", "Wookiee Strongman", "Wookiee Brawler", "Wookiee Leader", "Wookiee Elder", "Wookiee Chieftain", "Forest Master", "Kashyyyk Hero", "Wookiee Legend", "The Great Bark"],
-            
-            "imperial": ["Imp Recruit", "Imp Trooper", "Imp Soldier", "Imp Guard", "Imp Corporal", "Imp Sergeant", "Staff Sergeant", "Master Sergeant", "Imp Lieutenant", "Imp Captain", "Imp Major", "Imp Colonel", "High Colonel", "Imp General", "High General", "Grand General", "Imperial Hero", "Imperial Leader", "Imperial Legend", "Empire's Hand"],
-            "commander": ["Imp Cadet", "Imp Officer", "Field Officer", "Tactical Officer", "Lieutenant", "Flight Officer", "Staff Officer", "Captain", "Commander", "High Commander", "Major", "Lt Colonel", "Colonel", "Brigadier", "General", "Grand General", "Admiral", "Fleet Admiral", "Grand Admiral", "Supreme Commander"],
-            "bountyhunter": ["Novice Hunter", "Amateur Hunter", "Contractor", "Tracker", "Enforcer", "Assassin", "Mercenary", "Bounty Hunter", "Professional Hunter", "Veteran Hunter", "Elite Hunter", "Master Hunter", "Notorious Hunter", "Famed Hunter", "Legendary Hunter", "Grand Hunter", "Prime Hunter", "Guild Master", "Hunter Legend", "The Ultimate Prize"],
-            "mandalorian": ["Foundling", "Acolyte", "Initiate", "Mando Trainee", "Mando Warrior", "Mando Soldier", "Mando Guard", "Mando Veteran", "Mando Scout", "Mando Sniper", "Mando Heavy", "Clan Member", "Clan Guard", "Clan Leader", "House Leader", "Mando Hero", "Mando Commander", "The Armorer", "Mando Legend", "The Mandalore"],
-            "droideka": ["Mk I Unit", "Mk II Unit", "Mk III Unit", "Drone", "Sentinel", "Guard", "Droideka", "Advanced Deka", "Elite Deka", "Heavy Deka", "Shield Deka", "Rapid Deka", "Sniper Deka", "Veteran Deka", "Droideka Master", "Droideka Prime", "Droideka Lead", "Droideka Ace", "Destroyer Prime", "The Rolling Death"],
-            "sbd": ["B2 Unit", "B2 Grunt", "B2 Soldier", "B2 Guard", "B2 Trooper", "B2 Veteran", "B2 Elite", "B2 Specialist", "B2 Sniper", "B2 Heavy", "B2 Commando", "B2 Captain", "B2 Commander", "B2 Lead", "B2 Hero", "B2 Prime", "B2 Ace", "B2 Master", "B2 Legend", "Iron Will"],
-            
-            "jedi": ["Youngling", "Padawan", "Initiate", "Apprentice", "Service Corps", "Jedi Knight", "Jedi Hero", "Guardian", "Consular", "Sentinel", "Investigator", "Jedi Master", "Council Member", "Master of the Order", "Grand Master", "Force Spirit", "Force Entity", "The Chosen One", "Whill Overseer", "Jedi Legend"],
-            "sith": ["Hopeful", "Acolyte", "Initiate", "Apprentice", "Neophyte", "Adept", "Soldier", "Warrior", "Marauder", "Assassin", "Executioner", "Champion", "Inquisitor", "Lord", "High Lord", "Darth", "Dark Councilor", "Sorcerer", "Overlord", "Sith Emperor"]
-        }
+        # Calculate index (0 to 19) based on 2.5 levels per title
+        idx = int(min((self.level - 1) // 2.5, 19))
         
         dark_side = ["imperial", "commander", "bountyhunter", "mandalorian", "droideka", "sbd", "sith"]
-
-        if current_mode == 3:
-            if self.faction in dark_side:
-                title_list = paths["sith"]
-                return f"^1{title_list[idx]}"
-            else:
-                title_list = paths["jedi"]
-                return f"^5{title_list[idx]}"
-
-        title_list = paths.get(self.faction, paths["jedi"])
         color = "^1" if self.faction in dark_side else "^5"
-        
-        return f"{color}{title_list[idx]}"
+
+        # Force Jedi/Sith titles in Duel Mode (Mode 3)
+        if current_mode == 3:
+            path = self.paths["sith"] if self.faction in dark_side else self.paths["jedi"]
+            return f"{color}{path[idx]}"
+
+        # Standard career path
+        path = self.paths.get(self.faction, self.paths["jedi"])
+        return f"{color}{path[idx]}"
 
     def get_progress_bar(self):
         # Ensure we don't divide by zero
@@ -134,6 +131,38 @@ class MBIIChaosPlugin:
                 )
             ''')
             conn.commit()
+
+    def get_leaderboard_pos(self, p):
+        with sqlite3.connect(self.db_filename) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM players WHERE xp > ?", (p.xp,))
+            rank = cursor.fetchone()[0] + 1
+            cursor.execute("SELECT COUNT(*) FROM players")
+            total = cursor.fetchone()[0]
+            
+            # Formatting (1st, 2nd, 3rd, 4th...)
+            suffix = "th"
+            if rank % 10 == 1 and rank % 100 != 11: suffix = "st"
+            elif rank % 10 == 2 and rank % 100 != 12: suffix = "nd"
+            elif rank % 10 == 3 and rank % 100 != 13: suffix = "rd"
+            
+            return f"{rank}{suffix}", total
+
+    def check_leaderboard_promotion(self, p):
+        """Checks if a player has recently entered the Top 5 and announces it."""
+        with sqlite3.connect(self.db_filename) as conn:
+            cursor = conn.cursor()
+            # Get the XP of the person currently in 5th place
+            cursor.execute("SELECT xp FROM players ORDER BY xp DESC LIMIT 1 OFFSET 4")
+            result = cursor.fetchone()
+            
+            if result:
+                fifth_place_xp = result[0]
+                # If player just passed the 5th place person
+                if p.xp >= fifth_place_xp and (p.xp - 100) < fifth_place_xp: 
+                    # The (xp - 100) check ensures it only announces the MOMENT they pass them
+                    self.send_rcon(f'say "^5[NETWORK ALERT] ^7{p.name} ^7has broken into the ^2TOP 5 ^7Leaderboard!"')
+                    self.send_rcon(f'say "^3New Rank: ^7{p.get_title(self.current_server_mode)}"')                
 
     def load_config(self):
         config = configparser.ConfigParser()
@@ -301,6 +330,26 @@ class MBIIChaosPlugin:
         elif new_level < old_level:
             self.send_rcon(f'say "^1DEMOTION: ^1{player.name} ^7has fallen to {current_title} ^1(Lvl {new_level})..."')
 
+    def get_player_rank(self, p):
+        """Returns the player's numerical rank based on total XP (e.g., 1st, 2nd)."""
+        with sqlite3.connect(self.db_filename, timeout=20) as conn:
+            cursor = conn.cursor()
+            # Count how many players have more XP than this player
+            cursor.execute("SELECT COUNT(*) FROM players WHERE xp > ?", (p.xp,))
+            higher_count = cursor.fetchone()[0]
+            
+            # Get total player count for context
+            cursor.execute("SELECT COUNT(*) FROM players")
+            total_players = cursor.fetchone()[0]
+            
+            rank = higher_count + 1
+            
+            # Formatting the suffix (st, nd, rd, th)
+            if 11 <= (rank % 100) <= 13: suffix = "th"
+            else: suffix = {1: "st", 2: "nd", 3: "rd"}.get(rank % 10, "th")
+            
+            return f"{rank}{suffix}", total_players        
+
     def process_kill(self, k_id, v_id, w_id, raw_line=""):
         try: 
             k_id, v_id, w_id = int(k_id), int(v_id), int(w_id)
@@ -432,6 +481,9 @@ class MBIIChaosPlugin:
             v_title = victim.get_title(self.current_server_mode)
             
             self.send_rcon(f'say "{k_title} ^2{killer.name} ^7defeated {v_title} ^1{victim.name} ^3(+{xp_gain * mult} XP){payout_str} {loss_str}{bonus_str}"')
+
+            # --- PROMOTION CHECK HERE ---
+            self.check_leaderboard_promotion(killer)
             
             # Final Save & Check
             self.check_rank_change(killer, old_lvl_k)
@@ -490,39 +542,55 @@ class MBIIChaosPlugin:
             
             # Dynamically set the help lists based on the current mode
             if self.current_server_mode == 3:
-                hero_list = "jedi"
-                villain_list = "sith"
+                hero_list, villain_list = "jedi", "sith"
                 mode_note = "^1(^7Duel Mode Active: ^5Jedi^1/^1Sith)"
             else:
                 hero_list = "rebel, elite, clone, arc, hero, wookiee, jedi"
                 villain_list = "imperial, commander, bh, mando, deka, sbd, sith"
                 mode_note = "^2(All Modes)"
 
+            # --- UPDATED: Title Progression List Logic (4-Line Split) ---
+            if len(parts) > 1 and parts[1].strip().lower() == "list":
+                # Ensure the player object has the paths attribute
+                titles = getattr(p, 'paths', {}).get(p.faction, [])
+                
+                if titles:
+                    self.send_rcon(f'svtell {p.id} "^5--- {p.faction.upper()} PROGRESSION ---"')
+                    
+                    # We split into 4 lines (5 titles each) to avoid JKA console truncation
+                    line1 = " ^7| ".join([f"^2{i+1}:^7 {titles[i]}" for i in range(0, 5)])
+                    line2 = " ^7| ".join([f"^2{i+1}:^7 {titles[i]}" for i in range(5, 10)])
+                    line3 = " ^7| ".join([f"^2{i+1}:^7 {titles[i]}" for i in range(10, 15)])
+                    line4 = " ^7| ".join([f"^2{i+1}:^7 {titles[i]}" for i in range(15, 20)])
+                    
+                    self.send_rcon(f'svtell {p.id} "{line1}"')
+                    self.send_rcon(f'svtell {p.id} "{line2}"')
+                    self.send_rcon(f'svtell {p.id} "{line3}"')
+                    self.send_rcon(f'svtell {p.id} "{line4}"')
+                    self.send_rcon(f'svtell {p.id} "^3Note: ^7New titles unlock every ^22.5 Levels^7."')
+                else:
+                    self.send_rcon(f'svtell {p.id} "^1Error: ^7Could not retrieve career paths."')
+                return    
+
             # Usage check
             if len(parts) < 2 or parts[1].strip() == "":
-                # Notice the 'f' before the quote!
                 self.send_rcon(f'svtell {p.id} "^3Usage: !title <career_name> {mode_note}"')
+                self.send_rcon(f'svtell {p.id} "^2Tip: ^7Type ^3!title list ^7to see your rank progression!"')
                 self.send_rcon(f'svtell {p.id} "^5Hero: ^7{hero_list}"')
                 self.send_rcon(f'svtell {p.id} "^1Villain: ^7{villain_list}"')
                 return
 
             choice = parts[1].lower().strip().replace(" ", "")
-            
             mapping = {
-                "rebel": "rebel", "soldier": "rebel",
-                "elite": "elitetrooper", "elitetrooper": "elitetrooper",
-                "clone": "clonetrooper", "clonetrooper": "clonetrooper",
-                "arc": "arctrooper", "arctrooper": "arctrooper",
-                "hero": "hero",
-                "wookiee": "wookiee", "wookie": "wookiee",
-                "jedi": "jedi",
-                "imperial": "imperial", "imp": "imperial",
-                "commander": "commander",
-                "bountyhunter": "bountyhunter", "bh": "bountyhunter",
-                "mandalorian": "mandalorian", "mando": "mandalorian",
-                "droideka": "droideka", "deka": "droideka",
-                "sbd": "sbd", "superbattledroid": "sbd",
-                "sith": "sith"
+                "rebel": "rebel", "soldier": "rebel", "elite": "elitetrooper", 
+                "elitetrooper": "elitetrooper", "clone": "clonetrooper", 
+                "clonetrooper": "clonetrooper", "arc": "arctrooper", 
+                "arctrooper": "arctrooper", "hero": "hero", "wookiee": "wookiee", 
+                "wookie": "wookiee", "jedi": "jedi", "imperial": "imperial", 
+                "imp": "imperial", "commander": "commander", "bh": "bountyhunter",
+                "bountyhunter": "bountyhunter", "mandalorian": "mandalorian", 
+                "mando": "mandalorian", "droideka": "droideka", "deka": "droideka", 
+                "sbd": "sbd", "superbattledroid": "sbd", "sith": "sith"
             }
             
             if choice in mapping:
@@ -534,19 +602,32 @@ class MBIIChaosPlugin:
                 p.faction = target_faction
                 self.save_player_stat(p)
                 title_display = p.get_title(self.current_server_mode)
-                self.send_rcon(f'say "^7{p.name} ^7has chosen the career: {title_display}^7!"')
+                self.send_rcon(f'say "^7{p.name} ^7is now a ^3{title_display}^7!"')
             else:
                 self.send_rcon(f'svtell {p.id} "^1Error: ^7Career \'{choice}\' not found."')
-                self.send_rcon(f'svtell {p.id} "^5Hero: ^7{hero_list}"')
-                self.send_rcon(f'svtell {p.id} "^1Villain: ^7{villain_list}"')
 
         elif msg == "!help" or msg == "!commands":        
-            self.send_rcon(f'svtell {p.id} "^5--- CHAOS COMMANDS ---"')
-            self.send_rcon(f'svtell {p.id} "^3Personal: ^7!rank, !level, !stats, !bank, !title"')
-            self.send_rcon(f'svtell {p.id} "^3Economy: ^7!pay <name> <amt>, !wealth, !top, !vault"')
-            self.send_rcon(f'svtell {p.id} "^3Gambling: ^7!pazaak <amt>, !bet <name> <amt>, !bounty <name> <amt>, !bounties"')
-            self.send_rcon(f'svtell {p.id} "^3Pazaak: ^7!hit, !stand, !side (View/Play modifier cards)"')
-            self.send_rcon(f'svtell {p.id} "^2Jackpot: ^7Beat the Dealer to win the ^3!vault ^7bonus!"')
+            self.send_rcon(f'svtell {p.id} "^5--- DATA TERMINAL ---"')
+            
+            # Personal Section (Consolidated)
+            self.send_rcon(f'svtell {p.id} "^3Identity: ^7!stats (Rank), !title (Careers), !bank"')
+            
+            # Economy Section
+            self.send_rcon(f'svtell {p.id} "^3Finance: ^7!pay <name> <amt>, !wealth, !top (Leaderboard), !vault"')
+            
+            # Bounty Section
+            self.send_rcon(f'svtell {p.id} "^3Contracts: ^7!bounty <name> <amt>, !bounties (Active Marks)"')
+            
+            # Gambling Section Breakdown
+            self.send_rcon(f'svtell {p.id} "^5--- CANTINA GAMES ---"')
+            self.send_rcon(f'svtell {p.id} "^3Pazaak: ^7!pazaak <amt> (Use !hit, !stand, !side)"')
+            self.send_rcon(f'svtell {p.id} "^3Deathroll: ^7!deathroll <name> <amt> (Use !roll)"')
+            self.send_rcon(f'svtell {p.id} "^3Lottery: ^7!sarlacc (500cr - Map End Payout)"')
+            self.send_rcon(f'svtell {p.id} "^3Chance: ^7!highlo <amt> <h/l>, !holo (or !slot)"')
+            
+            # Jackpot info
+            self.send_rcon(f'svtell {p.id} "^2Bonus: ^7Secure the ^3!vault ^7by defeating the ^1Dealer ^7in Pazaak!"')
+            
         # Check for the command without a space first, or the command with a space
         elif msg == "!pazaak" or msg.startswith("!pazaak "):
             parts = msg.split()
@@ -642,20 +723,169 @@ class MBIIChaosPlugin:
                 else:
                     self.send_rcon(f'svtell {p.id} "^1Error: ^7You don\'t have a {card_val} card!"')
             except ValueError:
-                self.send_rcon(f'svtell {p.id} "^1Error: ^7Invalid card value."')         
-        elif msg == "!rank": 
-            display_title = p.get_title(self.current_server_mode)
-            self.send_rcon(f'svtell {p.id} "^7{p.name}: {display_title} ^7| Lvl: ^2{p.level} ^7| XP: ^2{p.xp}"')
-        elif msg == "!stats": 
-            self.send_rcon(f'svtell {p.id} "^7STATS: {p.name} ^2Kills: {p.kills} ^1Deaths: {p.deaths}"')
+                self.send_rcon(f'svtell {p.id} "^1Error: ^7Invalid card value."')
+
+        elif msg.startswith("!deathroll"):
+            parts = msg.split()
+            if len(parts) < 3:
+                self.send_rcon(f'svtell {p.id} "^3Usage: !deathroll <name> <amt>"')
+                return
+            try:
+                target_name, amt = parts[1].lower(), int(parts[2])
+                target = next((x for x in self.players if target_name in x.name.lower()), None)
+                
+                if not target or target.id == p.id:
+                    self.send_rcon(f'svtell {p.id} "^1Error: Player not found or you cannot roll yourself!"')
+                    return
+                if p.credits < amt or target.credits < amt:
+                    self.send_rcon(f'svtell {p.id} "^1Error: Both players need {amt}cr."')
+                    return
+
+                p.credits -= amt
+                target.credits -= amt
+                
+                # The starter rolls first automatically to set the first 'max'
+                roll = random.randint(1, amt)
+                
+                # IMPORTANT: Added 'turn' here so the handler knows to wait for the target
+                self.active_deathrolls[target.name] = {
+                    "opp": p.name, 
+                    "max": roll, 
+                    "pot": amt * 2,
+                    "turn": target.name 
+                }
+                
+                self.send_rcon(f'say "^5[DEATHROLL] ^7{p.name} rolls ^1{roll} ^7(out of {amt}). ^5{target.name}^7 is next!"')
+                self.save_player_stat(p)
+                self.save_player_stat(target)
+            except ValueError: pass
+
+        # --- DEATH ROLL TURN HANDLER ---
+        if msg == "!roll":
+            # Find the game where the player is either the 'key' (target) or the 'opp' (starter)
+            game_key = next((k for k, v in self.active_deathrolls.items() if (k == p.name or v['opp'] == p.name)), None)
+            
+            if game_key:
+                game = self.active_deathrolls[game_key]
+                
+                # Check if it is actually this player's turn
+                if p.name != game['turn']:
+                    self.send_rcon(f'svtell {p.id} "^1Wait! ^7It is ^5{game["turn"]}^7\'s turn to roll."')
+                    return
+
+                # Perform the roll
+                prev_max = game['max']
+                new_roll = random.randint(1, prev_max)
+                
+                # Swap turns
+                next_player = game['opp'] if p.name == game_key else game_key
+                game['turn'] = next_player
+                game['max'] = new_roll
+
+                if new_roll > 1:
+                    self.send_rcon(f'say "^5[DEATHROLL] ^7{p.name} rolls ^1{new_roll} ^7(out of {prev_max}). ^5{next_player}^7 is next!"')
+                else:
+                    # PLAYER LOST (Hit 1)
+                    winner_name = next_player
+                    winner = next((x for x in self.players if x.name == winner_name), None)
+                    
+                    self.send_rcon(f'say "^1TERMINATED! ^7{p.name} rolled a ^11^7. ^2{winner_name} ^7wins the ^3{game["pot"]}cr ^7pot!"')
+                    
+                    if winner:
+                        winner.credits += game['pot']
+                        self.save_player_stat(winner)
+                    
+                    # End game
+                    del self.active_deathrolls[game_key]
+                return   
+
+        elif msg == "!sarlacc":
+            cost = 500
+            if p.credits < cost:
+                self.send_rcon(f'svtell {p.id} "^1Error: !sarlacc costs 500cr."')
+                return
+            p.credits -= cost
+            self.sarlacc_pot += int(cost * 0.9)
+            self.dealer_credits += int(cost * 0.1) # House Tax
+            self.sarlacc_entrants.append(p.name)
+            self.send_rcon(f'say "^2SARLACC: ^7{p.name} entered the pit! Pot: ^3{self.sarlacc_pot}cr^7. Winner at map end!"')
+            self.save_player_stat(p)
+
+        elif msg.startswith("!highlo"):
+            parts = msg.split()
+            if len(parts) < 3:
+                self.send_rcon(f'svtell {p.id} "^3Usage: !highlo <amt> <high/low>"')
+                return
+            amt, guess = int(parts[1]), parts[2].lower()
+            if p.credits < amt: return
+            p.credits -= amt
+            c1, c2 = random.randint(1, 13), random.randint(1, 13)
+            while c1 == c2: c2 = random.randint(1, 13)
+            
+            win = (guess == "high" and c2 > c1) or (guess == "low" and c2 < c1)
+            if win:
+                p.credits += amt * 2
+                self.send_rcon(f'say "^2WIN! ^7{c2} was {guess}er than {c1}. ^3+{amt}cr!"')
+            else:
+                self.dealer_credits += amt
+                self.send_rcon(f'say "^1LOSS! ^7{c2} was not {guess}er than {c1}. ^1-{amt}cr!"')
+            self.save_player_stat(p)
+
+        elif msg == "!holo" or msg == "!slot":
+            cost = 150
+            if p.credits < cost: return
+            p.credits -= cost
+            icons = ["^1Sith", "^5Jedi", "^3Gold", "^2Boba", "^4Droid", "^6Star"]
+            reels = [random.choice(icons) for _ in range(5)]
+            self.send_rcon(f'svtell {p.id} "^5[SLOTS] ^7| {reels[0]} ^7| {reels[1]} ^7| {reels[2]} ^7| {reels[3]} ^7| {reels[4]} ^7|"')
+            
+            match_count = 1
+            first = reels[0]
+            for i in range(1, 5):
+                if reels[i] == first: match_count += 1
+                else: break
+
+            win = 0
+            if match_count == 5:
+                win = 10000
+                self.send_rcon(f'say "^6JACKPOT! ^7{p.name} matched 5 {first}^7s for ^310,000cr^7!"')
+            elif match_count == 4:
+                win = 2500
+                self.send_rcon(f'say "^5MEGA WIN! ^7{p.name} matched 4 {first}^7s for ^32,500cr^7!"')
+            elif match_count == 3:
+                win = 500
+                self.send_rcon(f'svtell {p.id} "^2WIN! ^7Matched 3: ^3500cr^7!"')
+
+            if win > 0:
+                if random.randint(1, 10) == 1: # 10% Bonus Chance
+                    mult = random.randint(2, 5)
+                    win *= mult
+                    self.send_rcon(f'say "^3BONUS! ^7x{mult} multiplier! Total: ^3{win}cr^7!"')
+                p.credits += win
+            else:
+                self.dealer_credits += int(cost * 0.1)
+            self.save_player_stat(p)                         
+        elif msg == "!stats" or msg == "!rank":
+            rank_str, total = self.get_player_rank(p)
+            title = p.get_title(self.current_server_mode)
+            progress = p.get_progress_bar()
+            
+            self.send_rcon(f'svtell {p.id} "^5--- ACCESSING DATAPAD ---"')
+            self.send_rcon(f'svtell {p.id} "^7Network Rank: ^2{rank_str} ^7in Sector ^3(of {total} players)"')
+            self.send_rcon(f'svtell {p.id} "^7Clearance: {title} ^7(Lvl ^2{p.level}^7)"')
+            self.send_rcon(f'svtell {p.id} "^7Logs: ^2{p.kills} Eliminations ^7| ^1{p.deaths} Casualties ^7(KDR: ^3{p.kdr}^7)"')
+            self.send_rcon(f'svtell {p.id} "^7Training: {progress}"')
+            self.send_rcon(f'svtell {p.id} "^7Credits: ^3{p.credits}cr"')
         elif msg == "!wealth":
-            with sqlite3.connect(self.db_filename, timeout=20) as conn:
+            with sqlite3.connect(self.db_filename) as conn:
                 cursor = conn.cursor()
-                # Fetch the top 5 directly from the database
                 cursor.execute("SELECT name, credits FROM players ORDER BY credits DESC LIMIT 5")
-                rows = cursor.fetchall()
-                txt = "^3Wealthy 5: " + " ".join([f"^5{r[0]}(^3{r[1]}cr^7)" for r in rows])
-                self.send_rcon(f'say "{txt}"')
+                rich_players = cursor.fetchall()
+                
+                self.send_rcon(f'say "^5--- MOST WANTED (FINANCIAL) ---"')
+                for i, (name, credits) in enumerate(rich_players, 1):
+                    # Color codes the credits: Gold/Yellow for the rich
+                    self.send_rcon(f'say "^7{i}. ^2{name} ^7- ^3{credits}cr"')
         elif msg == "!bank" or msg == "!wallet" or msg == "!credits":
             # Sum up the total value of all bounty contributions
             total_bounty = sum(p.bounty.values()) if isinstance(p.bounty, dict) else 0
@@ -781,18 +1011,18 @@ class MBIIChaosPlugin:
             except:
                 self.send_rcon(f'svtell {p.id} "^7Usage: !pay <name> <amount>"')  
         elif msg == "!top":
-            with sqlite3.connect(self.db_filename, timeout=20) as conn:
+            with sqlite3.connect(self.db_filename) as conn:
                 cursor = conn.cursor()
-                cursor.execute("SELECT name, xp FROM players ORDER BY xp DESC LIMIT 5")
-                rows = cursor.fetchall()
-
-            xpl = int(self.settings.get('xp_per_level', 1000))
-            txt = "^5Top 5: " + " ".join([f"^7{r[0]}(^2Lvl {(r[1]//xpl)+1}^7)" for r in rows])
-            self.send_rcon(f'say "{txt}"')
-        elif msg == "!level":
-            title = p.get_title(self.current_server_mode)
-            progress = p.get_progress_bar()
-            self.send_rcon(f'svtell {p.id} "{title} ^7{p.name} ^7- Lvl ^2{p.level} ^7| {progress}"')
+                cursor.execute("SELECT name, xp, faction FROM players ORDER BY xp DESC LIMIT 5")
+                top_players = cursor.fetchall()
+                
+                # Public announcement for the whole server
+                self.send_rcon(f'say "^5--- SECTOR TOP ELIMINATORS ---"')
+                for i, (name, xp, faction) in enumerate(top_players, 1):
+                    # Use self.xp_per_lvl from the class or calculate from settings
+                    xp_needed = int(self.settings.get('xp_per_level', 1000))
+                    lvl = min((xp // xp_needed) + 1, 50)
+                    self.send_rcon(f'say "^7{i}. ^2{name} ^7- Lvl {lvl} ^3({faction.capitalize()})"')
         elif msg == "!vault" or msg == "!house":
             # Show the current progressive jackpot
             self.send_rcon(f'svtell {p.id} "^5[HOUSE] ^7Current Vault: ^3{self.dealer_credits} Credits ^7(1 percent chance to heist on kill)"')                  
@@ -833,7 +1063,13 @@ class MBIIChaosPlugin:
                         line = line.strip() # Remove hidden \r or trailing spaces
                         if not line: continue
                         # Keep your existing InitGame logic as a backup for map changes
-                        if "InitGame:" in line: 
+                        if "InitGame:" in line:
+                        # Sarlacc Winner Selection
+                            if self.sarlacc_entrants and self.sarlacc_pot > 0:
+                                winner_name = random.choice(self.sarlacc_entrants)
+                                self.send_rcon(f'say "^2SARLACC: ^7{winner_name} survived the pit and won ^3{self.sarlacc_pot}cr^7!"')
+                                self.sarlacc_pot = 0
+                                self.sarlacc_entrants = [] 
                             self.players = [] 
                             
                             # Re-detect game mode (Duel vs Open)
