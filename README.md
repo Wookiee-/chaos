@@ -44,20 +44,20 @@ The `chaos.py` script is a comprehensive RPG-style server management system for 
 ---
 
 ## 🛠️Game Commands
-| Command | Functional Parameters |Datapad Action
+| Command | Functional Parameters | Datapad Action |
 | :--- | :--- |
-**Identity**
+| **Identity** |
 | \`!stats\` / \`!rank\` | Access your Imperial Datapad (Dossier, Sector Rank, & Training). |
 | \`!title <name>,<career_name>\` | Select your career path (e.g., !title mando). Force-only in Duel. |
 | \`!bank\` | Query personal credit reserves. |
-**Finance**
+| **Finance** |
 | \`!pay <name> <amt>\` | Authorize a secure credit transfer to another player. |
 | \`!top\` / !\`wealth\` | (Global),Display top-tier personnel (XP Leaderboard or Credit Rankings). |
 | \`!vault\` | Check House Vault reserves (Monitors Heist potential). |
-**Contracts**
+| **Contracts** |
 | \`!bounty <name> <amt> | Issue a contract on a target's head. |
 | \`!bounties\` | View all currently active Marks in the sector. |
-**Cantina Games**
+| **Cantina Games** |
 | \`!pazaak <amt>\` | Start a match vs Dealer. Use !hit, !stand, or !side. |
 | \`!deathroll <name> <amt>\` | Challenge a peer to a roll-off. Use !roll to execute turns. |
 | \`!sarlacc\` |Purchase a lottery ticket (500cr) for the map-end payout. |
