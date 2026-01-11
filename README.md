@@ -14,9 +14,9 @@ The `chaos.py` script is a comprehensive RPG-style server management system for 
 * **Command Filtering**: The `!title` help menu dynamically updates based on the active server mode to prevent invalid career selections.
 
 ### 3. Economic & Cantina Features
-* **Holo-Slots (`!holo` / `!slot`)**: A high-stakes terminal costing 150cr per spin. Features rewards for 3, 4, and 5 matches (up to 10,000cr) with a 10% chance for a random x2-x5 multiplier on wins.
-* **High-Low (`!highlo`)**: A rapid-fire gambling game where players bet an amount and guess if a second hidden card will be "high" or "low" compared to the first.
-    **Payout**: Winning doubles the bet (2x payout), while losing contributes the full bet to the House Vault.
+* **Holo-Slots (!holo / !slot)**: A high-stakes terminal costing 150cr per spin. Features rewards for 3, 4, and 5 matches (up to 10,000cr) with a 10% chance for a random x2-x5 multiplier on wins.
+* **High-Low (!highlo)**: A rapid-fire gambling game where players bet an amount and guess if a second hidden card will be "high" or "low" compared to the first.
+    - Payout: Winning doubles the bet (2x payout), while losing contributes the full bet to the House Vault.
 * **Banking & Pazaak**: Persistent credit storage in `players.db` with a full Pazaak system including side-decks and persistent dealer pots.
 * **Deathroll (PvP Gambling)**: Managed via a global dictionary in the main plugin to ensure reliable match handling between different players.
 * **Sarlacc Lottery**: A global server event where the pot and entrants are tracked by the plugin and awarded at the end of the map.
