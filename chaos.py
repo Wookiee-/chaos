@@ -377,23 +377,30 @@ class MBIIChaosPlugin:
         killer = next((x for x in self.players if x.id == k_id), None)
         victim = next((x for x in self.players if x.id == v_id), None)
 
-        # Fallback: if they aren't in memory but are valid players, sync them now
         if not killer and k_id < 1000 and k_name_log:
             killer = self.sync_player(k_id, k_name_log)
         if not victim and v_id < 1000 and v_name_log:
             victim = self.sync_player(v_id, v_name_log)
 
-        # 3. SAFETY CHECKS
         if not victim: return 
+
+        old_lvl_v = victim.level
+        v_team = getattr(victim, 'team', 0)
+        is_active_player = v_team in [1, 2]
+
+        # 3. SAFETY CHECKS
         if k_id == v_id or w_id in [97, 100]: # Suicide or World/falling
             victim.streak = 0
+            # Only save/check rank if they are an active player, not a spec
+            if is_active_player:
+                self.check_rank_change(victim, old_lvl_v)
+                self.save_player_stat(victim)
             return
 
-        # 4. TEAM KILL CHECK (Logic separation)
+        # 4. TEAM KILL CHECK
         is_teamkill = False
-        if killer and self.current_server_mode != 3: # Mode 3 is Duel (No TK)
+        if killer and self.current_server_mode != 3:
             k_team = getattr(killer, 'team', -1)
-            v_team = getattr(victim, 'team', -2)
             if k_team == v_team and k_team != 0 and k_team != -1:
                 is_teamkill = True
 
@@ -406,18 +413,19 @@ class MBIIChaosPlugin:
             self.save_player_stat(killer)
             return
 
-        # 5. VICTIM LOGIC (XP Loss)
-        old_lvl_v = victim.level
-        loss = int(self.settings.get('xp_loss', 10))
-        if victim.xp >= loss:
-            victim.xp -= loss
-            loss_str = f"^1(-{loss} XP)"
-        else:
-            victim.xp = 0
-            loss_str = "^5(Last Stand Protection)"
-        
-        victim.deaths += 1
-        victim.streak = 0
+        # 5. VICTIM LOGIC (XP Loss) - Wrapped in team check
+        loss_str = ""
+        if is_active_player:
+            loss = int(self.settings.get('xp_loss', 10))
+            if victim.xp >= loss:
+                victim.xp -= loss
+                loss_str = f"^1(-{loss} XP)"
+            else:
+                victim.xp = 0
+                loss_str = "^5(Last Stand Protection)"
+            
+            victim.deaths += 1
+            victim.streak = 0
 
         # 6. KILLER LOGIC (Rewards)
         if killer and k_id != 1022:
@@ -503,7 +511,9 @@ class MBIIChaosPlugin:
             self.save_player_stat(killer)
 
         # Always save the victim (for death count/xp loss/theft)
-        self.save_player_stat(victim)
+        if is_active_player:
+            self.check_rank_change(victim, old_lvl_v)
+            self.save_player_stat(victim)
 
     def play_pazaak(self, p, amount):
         if p.credits < amount:
