@@ -128,7 +128,8 @@ class MBIIChaosPlugin:
                     credits INTEGER DEFAULT 100,
                     kills INTEGER DEFAULT 0,
                     deaths INTEGER DEFAULT 0,
-                    faction TEXT DEFAULT 'jedi'
+                    faction TEXT DEFAULT 'jedi',
+                    top5 INTEGER DEFAULT 0  -- 0 for False, 1 for True
                 )
             ''')
             conn.commit()
@@ -150,7 +151,7 @@ class MBIIChaosPlugin:
             return f"{rank}{suffix}", total
 
     def check_leaderboard_promotion(self, p):
-        """Checks if a player has recently entered the Top 5 and announces it once."""
+        """Checks if a player has recently entered the Top 5 and persists the status."""
         with sqlite3.connect(self.db_filename) as conn:
             cursor = conn.cursor()
             # Get the XP of the person currently in 5th place
@@ -160,16 +161,21 @@ class MBIIChaosPlugin:
             if result:
                 fifth_place_xp = result[0]
                 
-                # If they have enough XP to be in the Top 5
+                # Check if they qualify for Top 5
                 if p.xp >= fifth_place_xp:
-                    # ONLY announce if they weren't already marked as being in the Top 5
                     if not p.is_top5:
                         self.send_rcon(f'say "^5[NETWORK ALERT] ^7{p.name} ^7has broken into the ^2TOP 5 ^7Leaderboard!"')
-                        self.send_rcon(f'say "^3New Rank: ^7{p.get_title(self.current_server_mode)}"')
-                        p.is_top5 = True  # Mark them so it doesn't spam
+                        p.is_top5 = True
+                        # Update DB immediately so it survives a restart
+                        cursor.execute("UPDATE players SET top5 = 1 WHERE clean_name = ?", (p.db_clean,))
+                        conn.commit()
                 else:
-                    # If they fall out of the top 5, reset the flag so they can be announced again if they reclaim it
-                    p.is_top5 = False               
+                    # If they fell out of the Top 5
+                    if p.is_top5:
+                        p.is_top5 = False
+                        # Update DB so they can be announced again if they climb back up
+                        cursor.execute("UPDATE players SET top5 = 0 WHERE clean_name = ?", (p.db_clean,))
+                        conn.commit()               
 
     def load_config(self):
         config = configparser.ConfigParser()
@@ -188,65 +194,65 @@ class MBIIChaosPlugin:
         self.db_filename = os.path.join(base_dir, db_name)
 
     def sync_player(self, sid, raw_name, ip="0.0.0.0"):
-        # We still clean the name for display purposes (!top, !rank)
         display_name = re.sub(r'\^.', '', raw_name).replace('[', '').replace(']', '').strip()
         clean = normalize(raw_name)
         
-        # Default stats for a brand new IP
-        xp, kills, deaths, faction, credits = 0, 0, 0, "jedi", 100
+        # Default stats for new players
+        xp, kills, deaths, faction, credits, top5_db = 0, 0, 0, "jedi", 100, 0
         
         with sqlite3.connect(self.db_filename, timeout=20) as conn:
             cursor = conn.cursor()
             
-            # --- THE IP-ONLY LOOKUP ---
-            cursor.execute("SELECT clean_name, xp, kills, deaths, faction, credits FROM players WHERE last_ip = ?", (ip,))
+            # 1. Try finding by IP first
+            cursor.execute("SELECT clean_name, xp, kills, deaths, faction, credits, top5 FROM players WHERE last_ip = ?", (ip,))
             data = cursor.fetchone()
             
+            # 2. If not found by IP, try finding by clean_name (the UNIQUE constraint)
+            if not data:
+                cursor.execute("SELECT clean_name, xp, kills, deaths, faction, credits, top5 FROM players WHERE clean_name = ?", (clean,))
+                data = cursor.fetchone()
+            
             if data:
-                # Found existing user by IP!
-                db_clean, xp, kills, deaths, faction, credits = data
-                
-                # --- THE FIX ---
-                # ONLY update the display name. 
-                # Removing 'clean_name = ?' here stops the UNIQUE constraint errors.
-                try:
-                    cursor.execute("UPDATE players SET name = ? WHERE last_ip = ?", (display_name, ip))
-                    conn.commit()
-                except sqlite3.Error as e:
-                    print(f"[!] Update Error: {e}")
+                db_clean, xp, kills, deaths, faction, credits, top5_db = data
+                # Update the existing record with new name and current IP
+                cursor.execute("UPDATE players SET name = ?, last_ip = ? WHERE clean_name = ?", (display_name, ip, db_clean))
+                clean = db_clean # Keep the established DB key
             else:
-                # Truly a new IP (New Player)
-                try:
-                    cursor.execute("INSERT INTO players (name, clean_name, last_ip, xp, kills, deaths, faction, credits) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                                   (display_name, clean, ip, xp, kills, deaths, faction, credits))
-                    conn.commit()
-                except sqlite3.IntegrityError:
-                    # If this name is already taken by ANOTHER IP, give them a unique ID
-                    unique_clean = f"{clean}_{int(time.time())}"
-                    cursor.execute("INSERT INTO players (name, clean_name, last_ip, xp, kills, deaths, faction, credits) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                                   (display_name, unique_clean, ip, xp, kills, deaths, faction, credits))
-                    conn.commit()
+                # 3. Truly new player - use INSERT OR IGNORE to prevent crashes
+                cursor.execute("""
+                    INSERT OR IGNORE INTO players (name, clean_name, last_ip, xp, kills, deaths, faction, credits, top5) 
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
+                """, (display_name, clean, ip, xp, kills, deaths, faction, credits))
+            
+            conn.commit()
 
-        # Update Memory: Remove the old slot data to make room for the fresh sync
         self.players = [p for p in self.players if p.id != sid]
         
-        # Note: We use the existing 'xp' and 'credits' found in the DB
         p = Player(sid, display_name, xp, kills, deaths, faction, credits, self.settings)
         p.raw_name = raw_name
         p.ip = ip 
+        p.db_clean = clean 
+        p.is_top5 = True if top5_db == 1 else False
+        
         self.players.append(p)
         return p
 
     def save_player_stat(self, p):
-        """Saves a single player's stats to SQLite. Call this after kills or transactions."""
+        """Saves player stats. Now includes kills, deaths, and persistent Top 5 status."""
+        # Ensure we use the unique key from sync, fallback to normalized name
+        db_key = getattr(p, 'db_clean', normalize(p.name))
+        
+        # Convert boolean True/False to database 1/0
+        top5_val = 1 if getattr(p, 'is_top5', False) else 0
+
         with sqlite3.connect(self.db_filename, timeout=20) as conn:
             cursor = conn.cursor()
             cursor.execute('''
                 UPDATE players 
-                SET xp = ?, credits = ?, kills = ?, deaths = ?, faction = ?, name = ?
+                SET xp = ?, credits = ?, kills = ?, deaths = ?, faction = ?, name = ?, top5 = ?
                 WHERE clean_name = ?
-            ''', (p.xp, p.credits, p.kills, p.deaths, p.faction, p.name, normalize(p.name)))
-            conn.commit()    
+            ''', (p.xp, p.credits, p.kills, p.deaths, p.faction, p.name, top5_val, db_key))
+            conn.commit()   
 
     def send_rcon(self, command, get_response=False):
         try:
@@ -451,9 +457,9 @@ class MBIIChaosPlugin:
                 # Check for "MEGA JACKPOT" (If vault is huge, take 50% instead!)
                 if self.dealer_credits > 5000:
                     heist = int(self.dealer_credits * 0.50)
-                    self.send_rcon(f'say "^1MEGA HEIST: ^7{killer.name} cleaned out the Vault for ^2{heist}cr^7!"')
+                    self.send_rcon(f'say "^1MEGA HEIST: ^7{killer.name} cleaned out the Vault for ^3{heist}cr^7!"')
                 else:
-                    self.send_rcon(f'say "^3HEIST: ^7{killer.name} cracked the House Vault for ^2{heist}cr^7!"')
+                    self.send_rcon(f'say "^3HEIST: ^7{killer.name} cracked the House Vault for ^3{heist}cr^7!"')
 
                 self.dealer_credits -= heist
                 killer.credits += heist    
@@ -810,14 +816,27 @@ class MBIIChaosPlugin:
 
         elif msg == "!sarlacc":
             cost = 500
-            if p.credits < cost:
-                self.send_rcon(f'svtell {p.id} "^1Error: !sarlacc costs 500cr."')
+            
+            # 1. Check if player is already entered
+            if p.name in self.sarlacc_entrants:
+                self.send_rcon(f'svtell {p.id} "^1Error: ^7You have already sacrificed to the Sarlacc! ^2Please wait for map end."')
                 return
+
+            # 2. Check credits
+            if p.credits < cost:
+                self.send_rcon(f'svtell {p.id} "^1Error: ^7!sarlacc costs ^3{cost}cr^7."')
+                return
+
+            # 3. Process entry
             p.credits -= cost
             self.sarlacc_pot += int(cost * 0.9)
             self.dealer_credits += int(cost * 0.1) # House Tax
             self.sarlacc_entrants.append(p.name)
-            self.send_rcon(f'say "^2SARLACC: ^7{p.name} entered the pit! Pot: ^3{self.sarlacc_pot}cr^7. Winner at map end!"')
+            
+            # 4. Announcements
+            self.send_rcon(f'say "^2SARLACC: ^7{p.name} entered the pit! Pot: ^3{self.sarlacc_pot}cr^7."')
+            self.send_rcon(f'svtell {p.id} "^5Note: ^7The last survivor at the end of the map devours the entire bounty."')
+            
             self.save_player_stat(p)
 
         elif msg.startswith("!highlo"):
@@ -1098,6 +1117,13 @@ class MBIIChaosPlugin:
                         # Sarlacc Winner Selection
                             if self.sarlacc_entrants and self.sarlacc_pot > 0:
                                 winner_name = random.choice(self.sarlacc_entrants)
+
+                                with sqlite3.connect(self.db_filename) as conn:
+                                    cursor = conn.cursor()
+                                    cursor.execute("UPDATE players SET credits = credits + ? WHERE name = ?", 
+                                                   (self.sarlacc_pot, winner_name))
+                                    conn.commit()   
+                                     
                                 self.send_rcon(f'say "^2SARLACC: ^7{winner_name} survived the pit and won ^3{self.sarlacc_pot}cr^7!"')
                                 self.sarlacc_pot = 0
                                 self.sarlacc_entrants = [] 
