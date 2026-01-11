@@ -551,13 +551,13 @@ class MBIIChaosPlugin:
 
             # --- UPDATED: Title Progression List Logic (4-Line Split) ---
             if len(parts) > 1 and parts[1].strip().lower() == "list":
-                # Ensure the player object has the paths attribute
-                titles = getattr(p, 'paths', {}).get(p.faction, [])
+                # Get the title list for the player's current faction
+                titles = p.paths.get(p.faction, p.paths.get("jedi", []))
                 
-                if titles:
+                if len(titles) >= 20:
                     self.send_rcon(f'svtell {p.id} "^5--- {p.faction.upper()} PROGRESSION ---"')
                     
-                    # We split into 4 lines (5 titles each) to avoid JKA console truncation
+                    # Corrected Rank Numbers (i+1) and Ranges
                     line1 = " ^7| ".join([f"^2{i+1}:^7 {titles[i]}" for i in range(0, 5)])
                     line2 = " ^7| ".join([f"^2{i+1}:^7 {titles[i]}" for i in range(5, 10)])
                     line3 = " ^7| ".join([f"^2{i+1}:^7 {titles[i]}" for i in range(10, 15)])
@@ -569,8 +569,8 @@ class MBIIChaosPlugin:
                     self.send_rcon(f'svtell {p.id} "{line4}"')
                     self.send_rcon(f'svtell {p.id} "^3Note: ^7New titles unlock every ^22.5 Levels^7."')
                 else:
-                    self.send_rcon(f'svtell {p.id} "^1Error: ^7Could not retrieve career paths."')
-                return    
+                    self.send_rcon(f'svtell {p.id} "^1Error: ^7Career path for {p.faction} is incomplete."')
+                return  
 
             # Usage check
             if len(parts) < 2 or parts[1].strip() == "":
