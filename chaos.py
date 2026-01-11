@@ -551,13 +551,15 @@ class MBIIChaosPlugin:
 
             # --- UPDATED: Title Progression List Logic (4-Line Split) ---
             if len(parts) > 1 and parts[1].strip().lower() == "list":
-                # Get the title list for the player's current faction
+                if not p: return # Safety check to prevent crash if player not found
+                
+                # Get titles from the paths dictionary defined in Player class
                 titles = p.paths.get(p.faction, p.paths.get("jedi", []))
                 
                 if len(titles) >= 20:
                     self.send_rcon(f'svtell {p.id} "^5--- {p.faction.upper()} PROGRESSION ---"')
                     
-                    # Corrected Rank Numbers (i+1) and Ranges
+                    # Corrected Rank Numbers (i+1) for each specific range
                     line1 = " ^7| ".join([f"^2{i+1}:^7 {titles[i]}" for i in range(0, 5)])
                     line2 = " ^7| ".join([f"^2{i+1}:^7 {titles[i]}" for i in range(5, 10)])
                     line3 = " ^7| ".join([f"^2{i+1}:^7 {titles[i]}" for i in range(10, 15)])
@@ -1178,4 +1180,8 @@ class MBIIChaosPlugin:
             time.sleep(0.2)
 
 if __name__ == "__main__":
-    MBIIChaosPlugin().run()
+    try:
+        MBIIChaosPlugin().run()
+    except Exception as e:
+        print(f"FATAL ERROR: {e}")
+        time.sleep(10)
