@@ -372,11 +372,10 @@ class MBIIChaosPlugin:
         k_name_log = m.group(1).strip() if m else None
         v_name_log = m.group(2).strip() if m else None
 
-        # 2. OBJECT RETRIEVAL (Look in memory first, don't wipe memory with sync_player yet)
+        # 2. OBJECT RETRIEVAL
         killer = next((x for x in self.players if x.id == k_id), None)
         victim = next((x for x in self.players if x.id == v_id), None)
 
-        # Fallback: if they aren't in memory but are valid players, sync them now
         if not killer and k_id < 1000 and k_name_log:
             killer = self.sync_player(k_id, k_name_log)
         if not victim and v_id < 1000 and v_name_log:
@@ -384,13 +383,20 @@ class MBIIChaosPlugin:
 
         # 3. SAFETY CHECKS
         if not victim: return 
+        
+        # --- BET FIX: REMOVE VICTIM BET ---
+        # If the victim had a bet active, they lost it because they died.
+        if victim.id in self.active_bets:
+            self.active_bets.pop(victim.id)
+
         if k_id == v_id or w_id in [97, 100]: # Suicide or World/falling
             victim.streak = 0
+            self.save_player_stat(victim)
             return
 
-        # 4. TEAM KILL CHECK (Logic separation)
+        # 4. TEAM KILL CHECK
         is_teamkill = False
-        if killer and self.current_server_mode != 3: # Mode 3 is Duel (No TK)
+        if killer and self.current_server_mode != 3:
             k_team = getattr(killer, 'team', -1)
             v_team = getattr(victim, 'team', -2)
             if k_team == v_team and k_team != 0 and k_team != -1:
@@ -417,6 +423,8 @@ class MBIIChaosPlugin:
         
         victim.deaths += 1
         victim.streak = 0
+        # Fixed: using old_lvl_v instead of old_lvl_k
+        self.check_rank_change(victim, old_lvl_v)
 
         # 6. KILLER LOGIC (Rewards)
         if killer and k_id != 1022:
@@ -445,21 +453,11 @@ class MBIIChaosPlugin:
                 bonus_str += f" ^1[STOLE {stolen}cr]"
 
             # --- PROGRESSIVE BANK HEIST ---
-            # 1. Every kill adds a small "tax" to the House Vault
             self.dealer_credits += 5 
-
-            # 2. Roll for the Heist (1% chance)
             if random.random() < 0.01 and self.dealer_credits > 100:
-                # Calculate payout (20% of current vault)
-                heist = int(self.dealer_credits * 0.20)
-                
-                # Check for "MEGA JACKPOT" (If vault is huge, take 50% instead!)
-                if self.dealer_credits > 5000:
-                    heist = int(self.dealer_credits * 0.50)
-                    self.send_rcon(f'say "^1MEGA HEIST: ^7{killer.name} cleaned out the Vault for ^2{heist}cr^7!"')
-                else:
-                    self.send_rcon(f'say "^3HEIST: ^7{killer.name} cracked the House Vault for ^2{heist}cr^7!"')
-
+                heist = int(self.dealer_credits * 0.50 if self.dealer_credits > 5000 else self.dealer_credits * 0.20)
+                heist_msg = "^1MEGA HEIST" if self.dealer_credits > 5000 else "^3HEIST"
+                self.send_rcon(f'say "{heist_msg}: ^7{killer.name} cracked the House Vault for ^2{heist}cr^7!"')
                 self.dealer_credits -= heist
                 killer.credits += heist    
 
@@ -479,10 +477,12 @@ class MBIIChaosPlugin:
                 b_reward = sum(victim.bounty.values())
                 victim.bounty = {}
 
+            # --- BET FIX: PAYOUT KILLER ---
             bet_reward = 0
             if killer.id in self.active_bets:
                 bet_data = self.active_bets.pop(killer.id)
-                bet_reward = (sum(bet_data.values()) if isinstance(bet_data, dict) else int(bet_data)) * 2
+                val = sum(bet_data.values()) if isinstance(bet_data, dict) else int(bet_data)
+                bet_reward = val * 2 # Double the bet amount
 
             killer.credits += (cred_gain + b_reward + bet_reward)
 
@@ -494,11 +494,9 @@ class MBIIChaosPlugin:
             
             self.send_rcon(f'say "{k_title} ^2{killer.name} ^7defeated {v_title} ^1{victim.name} ^3(+{xp_gain * mult} XP){payout_str} {loss_str}{bonus_str}"')
             
-            # Final Save & Check
             self.check_rank_change(killer, old_lvl_k)
             self.save_player_stat(killer)
 
-        # Always save the victim (for death count/xp loss/theft)
         self.save_player_stat(victim)
 
             
