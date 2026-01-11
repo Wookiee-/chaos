@@ -4,42 +4,36 @@ The `chaos.py` script is a comprehensive RPG-style server management system for 
 ## 🛡️ Core Systems
 
 ### 1. Career & Identification Systems
- * **20-Tier Career Paths**: 14 distinct career paths (7 Hero, 7 Villain), each featuring 20 unique titles that evolve every 2.5 levels.
- * **Access Clearance (Leveling)**: Players gain XP through eliminations and lose progress upon casualties. A "Last Stand" protocol prevents clearance from dropping below Level 1.
- * **Imperial Datapad (Dossier)**: Consolidates !level, !rank, and !stats into a single immersive terminal view.
- * **Automated Rank Calculation**: The !stats command queries the global database in real-time to display the player's exact numerical standing (e.g., 1st of 500 players) within the sector.
- * **Optimized Progress Display**: Employs a text-based telemetry bar [====>-] to bypass engine limitations and provide 100% visibility in the game console.
+* **20-Tier Career Paths**: 14 distinct paths (e.g., Rebel, ARC Trooper, Droideka, Sith) are fully implemented, each featuring 20 unique titles.
+* **Title Evolution**: Ranks evolve every 2.5 levels. The `!title` list command uses a 4-line split to ensure 100% visibility in the JKA console.
+* **Imperial Datapad (`!stats`)**: Displays real-time global standings and uses a text-based telemetry bar `[IIIIII....]` for clear progress tracking.
+* **Last Stand Protocol**: XP is deducted on casualties, but a safety check ensures clearance never drops below Level 1 (XP 0).
 
 ### 2. "Smart Switch" Mode Awareness
-* **Duel Mode Protocol (Mode 3)**: Automatically detects g_authenticity settings, restricting all personnel to "Jedi" or "Sith" clearance titles, regardless of their career choice.
-* **Open Mode Unlocks**: In all other modes (Open/Semi-Open), the full diversity of careers (Mandalorian, ARC Trooper, Droideka, etc.) is automatically enabled.
-* **Command Filtering**: The !title interface dynamically updates its help menu based on the active server mode to prevent invalid career selections.
+* **Duel Mode Protocol**: Automatically detects `g_authenticity` settings (Mode 3). When active, it forces Jedi/Sith titles regardless of the player's career.
+* **Command Filtering**: The `!title` help menu dynamically updates based on the active server mode to prevent invalid career selections.
 
 ### 3. Economic & Cantina Features
-* **Banking Infrastructure**: Credits are secured in the players.db. Every elimination grants a passive credit gain.
-* **Cantina Games (Pazaak)**: A high-stakes Pazaak system with !hit, !stand, and !side (side-deck) commands. Features a 3x payout for a "Natural 20" and a persistent Dealer Pot.
-* **Deathroll (PvP Gambling)**: A turn-based high-low rolling game with an integrated turn-handler (!roll) to ensure fair play between challengers.
-* **Bounty Contracts**: Players can place credits on a target's head. The process_kill logic automatically liquidates the contract and awards the total to the successful hunter.
-* **Sarlacc Lottery**: A server-wide pool where players buy in via !sarlacc. The entire pot is awarded to one random survivor at the end of the map.
+* **Holo-Slots (`!holo` / `!slot`)**: A high-stakes terminal costing 150cr per spin. Features rewards for 3, 4, and 5 matches (up to 10,000cr) with a 10% chance for a random x2-x5 multiplier on wins.
+* **High-Low (`!highlo`)**: A rapid-fire gambling game where players bet an amount and guess if a second hidden card will be "high" or "low" compared to the first.
+    **Payout**: Winning doubles the bet (2x payout), while losing contributes the full bet to the House Vault.
+* **Banking & Pazaak**: Persistent credit storage in `players.db` with a full Pazaak system including side-decks and persistent dealer pots.
+* **Deathroll (PvP Gambling)**: Managed via a global dictionary in the main plugin to ensure reliable match handling between different players.
+* **Sarlacc Lottery**: A global server event where the pot and entrants are tracked by the plugin and awarded at the end of the map.
 
 ### 4. Advanced Combat Logic
-* **Imperial Killstreaks**: Tracks consecutive eliminations without a casualty, broadcasting global "War Reports" to the entire server.
-* **Nemesis & Revenge**: Identifies "dominance" (3+ kills on a single player). Terminating a Nemesis grants a +200cr Revenge Bonus and clears the feud logs.
-* **Force Surge**: A 5% chance on any elimination to trigger a surge, granting 3x XP.
-* **Wealth Redistribution (Theft)**: Eliminating a "High-Value Target" (over 5,000cr) automatically transfers 5% of their liquid capital to the victor.
-* **Progressive Vault Heist**: A 1% chance on kill to breach the House Vault, stealing 20% of the Dealer's credits.
-* **Vault Escalation**: Every kill on the server adds a 5cr "tax" to the House Vault. If the vault exceeds 5,000cr, the reward escalates to a 50% Mega Heist.
+* **Killstreaks & Nemesis**: Tracks consecutive eliminations and identifies a "Nemesis" after 3 kills on the same target. Terminating a Nemesis grants a +200cr Revenge Bonus.
+* **Force Surge & Theft**: Includes a 5% chance for a 3x XP Surge on kills and triggers a 5% capital transfer when eliminating "High-Value Targets" (>5,000cr).
+* **Vault Heists**: Every kill adds a 5cr "tax" to the House Vault. Players have a 1% chance on kill to breach the vault, stealing 20% (or 50% for "Mega Heists" if the vault exceeds 5,000cr).
 
 ### 5. Persistent Infrastructure
-* **IP-Based Record Syncing**: The database tracks last_ip. If a player changes their alias, the system recognizes the IP signature and automatically re-links their XP, credits, and career progress.
-* **Multi-Instance Ready**: Uses SQLite timeout=20 and conn.commit() logic, allowing multiple server instances (e.g., Port 29070 and 29071) to share the same database without corruption.
-* **Robust Regex Parsing**: Captures Slot ID, Name, and IP simultaneously, ensuring the script maintains 100% accuracy of the "Who's Who" on the server.
+* **IP-Based Record Syncing**: The system uses IP signatures to automatically re-link XP, credits, and career progress if a player changes their alias.
+* **Multi-Instance Stability**: Employs SQLite timeout and commit logic to allow multiple server instances to share the same database without corruption.
 
 ### 6. Asset Protection & Anti-Grief
-* **Live Team Tracking**: Monitors Team IDs (Rebel vs. Imperial) in real-time to prevent friendly-fire rewards.
-* **Traitor Sanctions**: Automatically detects Team Kills. Traitors are penalized -500 XP and -1000cr, accompanied by a global server-wide condemnation.
-* **Environment Filtering**: Ignores world deaths (falling, hazards) and suicides to protect player XP and prevent "farming" of the economy.
-* **Anti-Farming Logic**: Validates both the killer and victim's team status before any XP or Credit rewards are finalized..
+* **Traitor Sanctions**: Automatically detects Team Kills, penalizing traitors -500 XP and -1000cr with a global condemnation message.
+* **Environment Filtering**: Suicides and world deaths (falling, hazards) are ignored to prevent XP farming and economic manipulation.
+* **Leaderboard Promotion**: Uses a persistent is_top5 flag to ensure global announcements only trigger once when a player breaks into the Top 5.
 
 ---
 
