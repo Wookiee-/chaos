@@ -165,12 +165,12 @@ class MBIIChaosPlugin:
         self.active_pazaak = {} # NEW: Tracks active card games
         self.dealer_credits = 0 
         self.active_deathrolls = {}
-        self.init_sqlite()
+        self.init_json_db()
         self.last_sync_time = 0
         self.last_nemesis_cleanup = 0
         self.last_kill_sig = ""
 
-    def init_sqlite(self):
+    def init_json_db(self):
         # Initialize JSON-backed DB stored in self.db (dict keyed by GUID)
         self.db = {}
         # Map clean_name -> guid for quick lookups; saved together in JSON
